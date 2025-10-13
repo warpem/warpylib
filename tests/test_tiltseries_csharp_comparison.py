@@ -151,13 +151,13 @@ class TestTiltSeriesCSharpComparison:
         star_path = test_dir / "TS_1.star"
 
         # Image dimensions as defined in test (1000x1000 Angstroms)
-        image_dimensions = torch.tensor([1000.0, 1000.0])
-        image_center = image_dimensions / 2  # [500, 500]
+        image_dimensions = torch.tensor([4092.0, 5760.0]) * 0.834
+        image_center = image_dimensions / 2
 
         # Load the TiltSeries from XML
         ts = TiltSeries(
             path=str(xml_path),
-            volume_dimensions_physical=torch.tensor([1000.0, 1000.0, 1000.0]),
+            volume_dimensions_physical=torch.tensor([1000.0, 5700.0, 4000.0]) * 0.834,
             image_dimensions_physical=image_dimensions
         )
 
@@ -223,14 +223,14 @@ class TestTiltSeriesCSharpComparison:
                 print(f"Point {point_id} at centered coords {centered_coord.tolist()}")
                 print(f"{'Tilt':<6} {'Ref X':>12} {'Calc X':>12} {'Diff X':>12} {'Ref Y':>12} {'Calc Y':>12} {'Diff Y':>12}")
                 print("-"*80)
-                for i in range(min(ts.n_tilts, 10)):
+                for i in range(min(ts.n_tilts, 41)):
                     diff_x = calculated_centered_coords[i, 0] - reference_centered_coords[i, 0]
                     diff_y = calculated_centered_coords[i, 1] - reference_centered_coords[i, 1]
                     print(f"{i:<6} "
                           f"{reference_centered_coords[i, 0]:>12.4f} {calculated_centered_coords[i, 0]:>12.4f} {diff_x:>12.4f} "
                           f"{reference_centered_coords[i, 1]:>12.4f} {calculated_centered_coords[i, 1]:>12.4f} {diff_y:>12.4f}")
-                if ts.n_tilts > 10:
-                    print(f"... ({ts.n_tilts - 10} more tilts)")
+                if ts.n_tilts > 41:
+                    print(f"... ({ts.n_tilts - 41} more tilts)")
                 print("="*80 + "\n")
 
             # Compare positions with reasonable tolerance

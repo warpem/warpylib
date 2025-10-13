@@ -9,10 +9,10 @@ from typing import Optional, Tuple, Union
 import numpy as np
 import torch
 from torch_cubic_spline_grids import (
-    CubicBSplineGrid1d,
-    CubicBSplineGrid2d,
-    CubicBSplineGrid3d,
-    CubicBSplineGrid4d,
+    CubicCatmullRomGrid1d,
+    CubicCatmullRomGrid2d,
+    CubicCatmullRomGrid3d,
+    CubicCatmullRomGrid4d
 )
 from lxml import etree
 
@@ -207,7 +207,7 @@ class CubicGrid:
 
     def _create_torch_grid(
         self,
-    ) -> Union[CubicBSplineGrid1d, CubicBSplineGrid2d, CubicBSplineGrid3d, CubicBSplineGrid4d, None]:
+    ) -> Union[CubicCatmullRomGrid1d, CubicCatmullRomGrid2d, CubicCatmullRomGrid3d, CubicCatmullRomGrid4d, None]:
         """Create torch spline grid with proper data transformation"""
         if self.dimension_set == DimensionSets.NONE:
             return None
@@ -218,7 +218,7 @@ class CubicGrid:
             # Reshape from einspline layout to torch layout
             # Einspline: [((w*Z+z)*Y+y)*X+x] -> Torch: [W, Z, Y, X]
             data_torch = self.values.reshape((w_dim, z_dim, y_dim, x_dim))
-            return CubicBSplineGrid4d.from_grid_data(torch.from_numpy(data_torch))
+            return CubicCatmullRomGrid4d.from_grid_data(torch.from_numpy(data_torch))
 
         x_dim, y_dim, z_dim = self.dimensions[:3]
 
@@ -227,23 +227,23 @@ class CubicGrid:
             # Reshape from einspline layout to torch layout
             # Einspline: [(z*Y+y)*X+x] -> Torch: [Z, Y, X]
             data_torch = self.values.reshape((z_dim, y_dim, x_dim))
-            return CubicBSplineGrid3d.from_grid_data(torch.from_numpy(data_torch))
+            return CubicCatmullRomGrid3d.from_grid_data(torch.from_numpy(data_torch))
 
         # 2D cases
         elif self.dimension_set == DimensionSets.XY:
             # Data is [y, x]
             data_torch = self.values.reshape((y_dim, x_dim))
-            return CubicBSplineGrid2d.from_grid_data(torch.from_numpy(data_torch))
+            return CubicCatmullRomGrid2d.from_grid_data(torch.from_numpy(data_torch))
 
         elif self.dimension_set == DimensionSets.XZ:
             # Data is [z, x]
             data_torch = self.values.reshape((z_dim, x_dim))
-            return CubicBSplineGrid2d.from_grid_data(torch.from_numpy(data_torch))
+            return CubicCatmullRomGrid2d.from_grid_data(torch.from_numpy(data_torch))
 
         elif self.dimension_set == DimensionSets.YZ:
             # Data is [z, y]
             data_torch = self.values.reshape((z_dim, y_dim))
-            return CubicBSplineGrid2d.from_grid_data(torch.from_numpy(data_torch))
+            return CubicCatmullRomGrid2d.from_grid_data(torch.from_numpy(data_torch))
 
         # 1D cases
         elif self.dimension_set in (DimensionSets.X, DimensionSets.Y, DimensionSets.Z):
@@ -253,7 +253,7 @@ class CubicGrid:
                 data_torch = self.values.reshape(y_dim)
             else:  # Z
                 data_torch = self.values.reshape(z_dim)
-            return CubicBSplineGrid1d.from_grid_data(torch.from_numpy(data_torch))
+            return CubicCatmullRomGrid1d.from_grid_data(torch.from_numpy(data_torch))
 
         return None
 
