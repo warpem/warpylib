@@ -15,7 +15,7 @@ from torch_cubic_spline_grids import (
     CubicCatmullRomGrid4d
 )
 from lxml import etree
-from warpylib.interpolating_bspline import InterpolatingBSpline1d
+from warpylib.interpolating_bspline import InterpolatingBSpline1d, InterpolatingBSpline2d
 
 
 class Dimension(IntFlag):
@@ -208,7 +208,7 @@ class CubicGrid:
 
     def _create_torch_grid(
         self,
-    ) -> Union[CubicCatmullRomGrid1d, CubicCatmullRomGrid2d, CubicCatmullRomGrid3d, CubicCatmullRomGrid4d, InterpolatingBSpline1d, None]:
+    ) -> Union[CubicCatmullRomGrid1d, CubicCatmullRomGrid2d, CubicCatmullRomGrid3d, CubicCatmullRomGrid4d, InterpolatingBSpline1d, InterpolatingBSpline2d, None]:
         """Create torch spline grid with proper data transformation"""
         if self.dimension_set == DimensionSets.NONE:
             return None
@@ -234,17 +234,17 @@ class CubicGrid:
         elif self.dimension_set == DimensionSets.XY:
             # Data is [y, x]
             data_torch = self.values.reshape((y_dim, x_dim))
-            return CubicCatmullRomGrid2d.from_grid_data(torch.from_numpy(data_torch))
+            return InterpolatingBSpline2d.from_grid_data(torch.from_numpy(data_torch))
 
         elif self.dimension_set == DimensionSets.XZ:
             # Data is [z, x]
             data_torch = self.values.reshape((z_dim, x_dim))
-            return CubicCatmullRomGrid2d.from_grid_data(torch.from_numpy(data_torch))
+            return InterpolatingBSpline2d.from_grid_data(torch.from_numpy(data_torch))
 
         elif self.dimension_set == DimensionSets.YZ:
             # Data is [z, y]
             data_torch = self.values.reshape((z_dim, y_dim))
-            return CubicCatmullRomGrid2d.from_grid_data(torch.from_numpy(data_torch))
+            return InterpolatingBSpline2d.from_grid_data(torch.from_numpy(data_torch))
 
         # 1D cases
         elif self.dimension_set in (DimensionSets.X, DimensionSets.Y, DimensionSets.Z):
@@ -254,7 +254,7 @@ class CubicGrid:
                 data_torch = self.values.reshape(y_dim)
             else:  # Z
                 data_torch = self.values.reshape(z_dim)
-            return InterpolatingBSpline1d.from_data(torch.from_numpy(data_torch))
+            return InterpolatingBSpline1d.from_grid_data(torch.from_numpy(data_torch))
 
         return None
 

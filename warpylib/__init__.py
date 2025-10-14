@@ -15,6 +15,7 @@ from .euler import (
     rotate_y,
     rotate_z,
 )
+from .interpolating_bspline import InterpolatingBSpline1d, InterpolatingBSpline2d
 from .tilt_series import TiltSeries
 
 __all__ = [
@@ -26,6 +27,8 @@ __all__ = [
     "matrix_to_euler",
     "euler_xyz_extrinsic_to_matrix",
     "matrix_to_euler_xyz_extrinsic",
+    "InterpolatingBSpline1d",
+    "InterpolatingBSpline2d",
     "rotate_x",
     "rotate_y",
     "rotate_z",
