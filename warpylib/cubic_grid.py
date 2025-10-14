@@ -15,6 +15,7 @@ from torch_cubic_spline_grids import (
     CubicCatmullRomGrid4d
 )
 from lxml import etree
+from warpylib.interpolating_bspline import InterpolatingBSpline1d
 
 
 class Dimension(IntFlag):
@@ -207,7 +208,7 @@ class CubicGrid:
 
     def _create_torch_grid(
         self,
-    ) -> Union[CubicCatmullRomGrid1d, CubicCatmullRomGrid2d, CubicCatmullRomGrid3d, CubicCatmullRomGrid4d, None]:
+    ) -> Union[CubicCatmullRomGrid1d, CubicCatmullRomGrid2d, CubicCatmullRomGrid3d, CubicCatmullRomGrid4d, InterpolatingBSpline1d, None]:
         """Create torch spline grid with proper data transformation"""
         if self.dimension_set == DimensionSets.NONE:
             return None
@@ -253,7 +254,7 @@ class CubicGrid:
                 data_torch = self.values.reshape(y_dim)
             else:  # Z
                 data_torch = self.values.reshape(z_dim)
-            return CubicCatmullRomGrid1d.from_grid_data(torch.from_numpy(data_torch))
+            return InterpolatingBSpline1d.from_data(torch.from_numpy(data_torch))
 
         return None
 
