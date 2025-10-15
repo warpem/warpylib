@@ -122,11 +122,21 @@ def test_ctf_xml_serialization():
 
 def test_ctf_xml_partial_loading():
     """Test loading CTF with missing optional attributes."""
-    # Create minimal XML element with only some attributes
+    # Create minimal XML element with only some Param elements
     root = etree.Element("CTF")
-    root.set("PixelSize", "2.5")
-    root.set("Voltage", "200")
-    root.set("Defocus", "3.0")
+
+    # Add Param elements (not attributes)
+    param1 = etree.SubElement(root, "Param")
+    param1.set("Name", "PixelSize")
+    param1.set("Value", "2.5")
+
+    param2 = etree.SubElement(root, "Param")
+    param2.set("Name", "Voltage")
+    param2.set("Value", "200")
+
+    param3 = etree.SubElement(root, "Param")
+    param3.set("Name", "Defocus")
+    param3.set("Value", "3.0")
 
     ctf = CTF.load_from_xml(root)
 
