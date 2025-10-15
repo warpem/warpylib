@@ -45,12 +45,14 @@ def get_positions_in_one_tilt(ts: "TiltSeries", coords: torch.Tensor, tilt_id: i
     # Build tilt rotation matrix for this specific tilt
     deg_to_rad = torch.pi / 180.0
 
-    rot_angle = torch.tensor([0.0], dtype=torch.float32)
-    tilt_angle = torch.tensor([(ts.angles[tilt_id] + ts.level_angle_y) * deg_to_rad], dtype=torch.float32)
-    psi_angle = torch.tensor([-ts.tilt_axis_angles[tilt_id] * deg_to_rad], dtype=torch.float32)
+    euler_angle = torch.tensor([[
+        0.0,  # rot
+        (ts.angles[tilt_id] + ts.level_angle_y) * deg_to_rad,  # tilt
+        -ts.tilt_axis_angles[tilt_id] * deg_to_rad  # psi
+    ]], dtype=torch.float32)
 
     # Get Euler matrix
-    tilt_matrix = euler_to_matrix(rot_angle, tilt_angle, psi_angle).squeeze(0)  # (3, 3)
+    tilt_matrix = euler_to_matrix(euler_angle).squeeze(0)  # (3, 3)
 
     # Apply level angle X rotation
     level_x_rad = ts.level_angle_x * deg_to_rad
@@ -60,8 +62,12 @@ def get_positions_in_one_tilt(ts: "TiltSeries", coords: torch.Tensor, tilt_id: i
     # Build flipped matrix if angles are inverted
     tilt_matrix_flipped = None
     if ts.are_angles_inverted:
-        tilt_angle_flipped = torch.tensor([-(ts.angles[tilt_id] + ts.level_angle_y) * deg_to_rad], dtype=torch.float32)
-        tilt_matrix_flipped = euler_to_matrix(rot_angle, tilt_angle_flipped, psi_angle).squeeze(0)
+        euler_angle_flipped = torch.tensor([[
+            0.0,  # rot
+            -(ts.angles[tilt_id] + ts.level_angle_y) * deg_to_rad,  # tilt (flipped)
+            -ts.tilt_axis_angles[tilt_id] * deg_to_rad  # psi
+        ]], dtype=torch.float32)
+        tilt_matrix_flipped = euler_to_matrix(euler_angle_flipped).squeeze(0)
         level_x_rad_flipped = -ts.level_angle_x * deg_to_rad
         level_x_matrix_flipped = rotate_x(torch.tensor([level_x_rad_flipped])).squeeze(0)
         tilt_matrix_flipped = torch.matmul(tilt_matrix_flipped, level_x_matrix_flipped)
@@ -235,12 +241,15 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
     #     Matrix3.RotateX(LevelAngleX * Helper.ToRad)
     deg_to_rad = torch.pi / 180.0
 
-    rot_angles = torch.zeros(ts.n_tilts, dtype=torch.float32)  # First angle (rot) = 0
-    tilt_angles = (ts.angles + ts.level_angle_y) * deg_to_rad  # Second angle (tilt)
-    psi_angles = -ts.tilt_axis_angles * deg_to_rad  # Third angle (psi)
+    # Stack angles into a single tensor (n_tilts, 3)
+    euler_angles = torch.stack([
+        torch.zeros(ts.n_tilts, dtype=torch.float32),  # rot = 0
+        (ts.angles + ts.level_angle_y) * deg_to_rad,   # tilt
+        -ts.tilt_axis_angles * deg_to_rad              # psi
+    ], dim=-1)
 
     # Get Euler matrices
-    tilt_matrices = euler_to_matrix(rot_angles, tilt_angles, psi_angles)  # (n_tilts, 3, 3)
+    tilt_matrices = euler_to_matrix(euler_angles)  # (n_tilts, 3, 3)
 
     # Apply level angle X rotation
     level_x_rad = ts.level_angle_x * deg_to_rad
@@ -250,8 +259,12 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
     # Build flipped matrices if angles are inverted
     tilt_matrices_flipped = None
     if ts.are_angles_inverted:
-        tilt_angles_flipped = -(ts.angles + ts.level_angle_y) * deg_to_rad
-        tilt_matrices_flipped = euler_to_matrix(rot_angles, tilt_angles_flipped, psi_angles)
+        euler_angles_flipped = torch.stack([
+            torch.zeros(ts.n_tilts, dtype=torch.float32),  # rot = 0
+            -(ts.angles + ts.level_angle_y) * deg_to_rad,  # tilt (flipped)
+            -ts.tilt_axis_angles * deg_to_rad              # psi
+        ], dim=-1)
+        tilt_matrices_flipped = euler_to_matrix(euler_angles_flipped)
         level_x_rad_flipped = -ts.level_angle_x * deg_to_rad
         level_x_matrix_flipped = rotate_x(torch.tensor([level_x_rad_flipped]))
         tilt_matrices_flipped = torch.matmul(tilt_matrices_flipped, level_x_matrix_flipped.squeeze(0))

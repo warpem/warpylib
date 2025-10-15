@@ -110,17 +110,9 @@ class TestTiltSeriesCSharpComparison:
             # Compare angles via rotation matrices
             for i in range(ts.n_tilts):
                 # Convert both to rotation matrices
-                ref_matrix = euler_to_matrix(
-                    reference_angles_rad[i, 0].unsqueeze(0),
-                    reference_angles_rad[i, 1].unsqueeze(0),
-                    reference_angles_rad[i, 2].unsqueeze(0)
-                ).squeeze(0)
+                ref_matrix = euler_to_matrix(reference_angles_rad[i].unsqueeze(0)).squeeze(0)
 
-                calc_matrix = euler_to_matrix(
-                    calculated_angles[i, 0].unsqueeze(0),
-                    calculated_angles[i, 1].unsqueeze(0),
-                    calculated_angles[i, 2].unsqueeze(0)
-                ).squeeze(0)
+                calc_matrix = euler_to_matrix(calculated_angles[i].unsqueeze(0)).squeeze(0)
 
                 # Matrices should be very close
                 if not torch.allclose(ref_matrix, calc_matrix, atol=1e-4, rtol=1e-4):

@@ -6,31 +6,33 @@ Supports ZYZ convention (rot, tilt, psi) used in cryo-EM.
 """
 
 import torch
-from typing import Tuple
 
 
-def euler_to_matrix(rot: torch.Tensor, tilt: torch.Tensor, psi: torch.Tensor) -> torch.Tensor:
+def euler_to_matrix(angles: torch.Tensor) -> torch.Tensor:
     """
     Convert Euler angles to rotation matrices (ZYZ convention).
 
     This corresponds to: R_z(psi) @ R_y(tilt) @ R_z(rot)
 
     Args:
-        rot: Rotation angle (alpha) in radians, shape (...,)
-        tilt: Tilt angle (beta) in radians, shape (...,)
-        psi: Psi angle (gamma) in radians, shape (...,)
+        angles: Euler angles in radians, shape (..., 3) where
+                angles[..., 0] = rot (alpha)
+                angles[..., 1] = tilt (beta)
+                angles[..., 2] = psi (gamma)
 
     Returns:
         Rotation matrices of shape (..., 3, 3)
 
     Example:
-        >>> rot = torch.tensor([0.0, 0.5])
-        >>> tilt = torch.tensor([0.0, 0.3])
-        >>> psi = torch.tensor([0.0, 0.2])
-        >>> matrices = euler_to_matrix(rot, tilt, psi)
+        >>> angles = torch.tensor([[0.0, 0.0, 0.0], [0.5, 0.3, 0.2]])
+        >>> matrices = euler_to_matrix(angles)
         >>> matrices.shape
         torch.Size([2, 3, 3])
     """
+    rot = angles[..., 0]
+    tilt = angles[..., 1]
+    psi = angles[..., 2]
+
     ca = torch.cos(rot)
     cb = torch.cos(tilt)
     cg = torch.cos(psi)
@@ -45,7 +47,7 @@ def euler_to_matrix(rot: torch.Tensor, tilt: torch.Tensor, psi: torch.Tensor) ->
 
     # Build rotation matrix
     shape = rot.shape
-    matrices = torch.zeros(*shape, 3, 3, dtype=rot.dtype, device=rot.device)
+    matrices = torch.zeros(*shape, 3, 3, dtype=angles.dtype, device=angles.device)
 
     # Row 1
     matrices[..., 0, 0] = cg * cc - sg * sa
@@ -65,7 +67,7 @@ def euler_to_matrix(rot: torch.Tensor, tilt: torch.Tensor, psi: torch.Tensor) ->
     return matrices
 
 
-def matrix_to_euler(matrices: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def matrix_to_euler(matrices: torch.Tensor) -> torch.Tensor:
     """
     Extract Euler angles from rotation matrices (ZYZ convention).
 
@@ -73,13 +75,16 @@ def matrix_to_euler(matrices: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor,
         matrices: Rotation matrices of shape (..., 3, 3)
 
     Returns:
-        Tuple of (rot, tilt, psi) each of shape (...,) in radians
+        Euler angles in radians, shape (..., 3) where
+        angles[..., 0] = rot (alpha)
+        angles[..., 1] = tilt (beta)
+        angles[..., 2] = psi (gamma)
 
     Example:
         >>> matrices = torch.eye(3).unsqueeze(0)
-        >>> rot, tilt, psi = matrix_to_euler(matrices)
-        >>> rot.shape, tilt.shape, psi.shape
-        (torch.Size([1]), torch.Size([1]), torch.Size([1]))
+        >>> angles = matrix_to_euler(matrices)
+        >>> angles.shape
+        torch.Size([1, 3])
     """
     # Extract matrix elements
     m11 = matrices[..., 0, 0]
@@ -164,29 +169,35 @@ def matrix_to_euler(matrices: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor,
             torch.atan2(m21_g, -m11_g)
         )
 
-    return (alpha, beta, gamma)
+    # Stack into a single tensor
+    return torch.stack([alpha, beta, gamma], dim=-1)
 
 
-def euler_xyz_extrinsic_to_matrix(k1: torch.Tensor, k2: torch.Tensor, k3: torch.Tensor) -> torch.Tensor:
+def euler_xyz_extrinsic_to_matrix(angles: torch.Tensor) -> torch.Tensor:
     """
     Convert Euler angles to rotation matrices (XYZ extrinsic convention).
 
     This corresponds to: R_z(k3) @ R_y(k2) @ R_x(k1)
 
     Args:
-        k1: Rotation around X axis in radians, shape (...,)
-        k2: Rotation around Y axis in radians, shape (...,)
-        k3: Rotation around Z axis in radians, shape (...,)
+        angles: Euler angles in radians, shape (..., 3) where
+                angles[..., 0] = k1 (rotation around X axis)
+                angles[..., 1] = k2 (rotation around Y axis)
+                angles[..., 2] = k3 (rotation around Z axis)
 
     Returns:
         Rotation matrices of shape (..., 3, 3)
     """
+    k1 = angles[..., 0]
+    k2 = angles[..., 1]
+    k3 = angles[..., 2]
+
     c1, s1 = torch.cos(k1), torch.sin(k1)
     c2, s2 = torch.cos(k2), torch.sin(k2)
     c3, s3 = torch.cos(k3), torch.sin(k3)
 
     shape = k1.shape
-    matrices = torch.zeros(*shape, 3, 3, dtype=k1.dtype, device=k1.device)
+    matrices = torch.zeros(*shape, 3, 3, dtype=angles.dtype, device=angles.device)
 
     # R_z(k3) @ R_y(k2) @ R_x(k1)
     matrices[..., 0, 0] = c2 * c3
@@ -204,7 +215,7 @@ def euler_xyz_extrinsic_to_matrix(k1: torch.Tensor, k2: torch.Tensor, k3: torch.
     return matrices
 
 
-def matrix_to_euler_xyz_extrinsic(matrices: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def matrix_to_euler_xyz_extrinsic(matrices: torch.Tensor) -> torch.Tensor:
     """
     Extract Euler angles from rotation matrices (XYZ extrinsic convention).
 
@@ -214,7 +225,10 @@ def matrix_to_euler_xyz_extrinsic(matrices: torch.Tensor) -> Tuple[torch.Tensor,
         matrices: Rotation matrices of shape (..., 3, 3)
 
     Returns:
-        Tuple of (k1, k2, k3) each of shape (...,) in radians
+        Euler angles in radians, shape (..., 3) where
+        angles[..., 0] = k1 (rotation around X axis)
+        angles[..., 1] = k2 (rotation around Y axis)
+        angles[..., 2] = k3 (rotation around Z axis)
     """
     # Extract matrix elements
     m11 = matrices[..., 0, 0]
@@ -249,7 +263,8 @@ def matrix_to_euler_xyz_extrinsic(matrices: torch.Tensor) -> Tuple[torch.Tensor,
         k1[gimbal_mask] = torch.atan2(m23[gimbal_mask], m22[gimbal_mask])
         k3[gimbal_mask] = 0.0
 
-    return (k1, k2, k3)
+    # Stack into a single tensor
+    return torch.stack([k1, k2, k3], dim=-1)
 
 
 def rotate_x(angle: torch.Tensor) -> torch.Tensor:

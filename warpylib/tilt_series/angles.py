@@ -72,12 +72,15 @@ def get_angle_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.Tens
     # Build tilt rotation matrices for each tilt
     deg_to_rad = torch.pi / 180.0
 
-    rot_angles = torch.zeros(ts.n_tilts, dtype=torch.float32)
-    tilt_angles = (ts.angles + ts.level_angle_y) * deg_to_rad
-    psi_angles = -ts.tilt_axis_angles * deg_to_rad
+    # Stack angles into a single tensor (n_tilts, 3)
+    euler_angles = torch.stack([
+        torch.zeros(ts.n_tilts, dtype=torch.float32),  # rot = 0
+        (ts.angles + ts.level_angle_y) * deg_to_rad,   # tilt
+        -ts.tilt_axis_angles * deg_to_rad              # psi
+    ], dim=-1)
 
     # Get Euler matrices
-    tilt_matrices = euler_to_matrix(rot_angles, tilt_angles, psi_angles)  # (n_tilts, 3, 3)
+    tilt_matrices = euler_to_matrix(euler_angles)  # (n_tilts, 3, 3)
 
     # Apply level angle X rotation
     level_x_rad = ts.level_angle_x * deg_to_rad
@@ -109,10 +112,8 @@ def get_angle_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.Tens
         rotation = torch.matmul(correction_matrix, tilt_matrices[t])
 
         # Extract Euler angles
-        rot, tilt, psi = matrix_to_euler(rotation.unsqueeze(0))
-        result[i, 0] = rot[0]
-        result[i, 1] = tilt[0]
-        result[i, 2] = psi[0]
+        angles = matrix_to_euler(rotation.unsqueeze(0))
+        result[i] = angles[0]
 
     return result
 
@@ -162,12 +163,15 @@ def get_particle_rotation_matrix_in_all_tilts(
     # Build tilt rotation matrices for each tilt
     deg_to_rad = torch.pi / 180.0
 
-    rot_angles_tilt = torch.zeros(ts.n_tilts, dtype=torch.float32)
-    tilt_angles_tilt = (ts.angles + ts.level_angle_y) * deg_to_rad
-    psi_angles_tilt = -ts.tilt_axis_angles * deg_to_rad
+    # Stack angles into a single tensor (n_tilts, 3)
+    euler_angles_tilt = torch.stack([
+        torch.zeros(ts.n_tilts, dtype=torch.float32),  # rot = 0
+        (ts.angles + ts.level_angle_y) * deg_to_rad,   # tilt
+        -ts.tilt_axis_angles * deg_to_rad              # psi
+    ], dim=-1)
 
     # Get Euler matrices
-    tilt_matrices = euler_to_matrix(rot_angles_tilt, tilt_angles_tilt, psi_angles_tilt)  # (n_tilts, 3, 3)
+    tilt_matrices = euler_to_matrix(euler_angles_tilt)  # (n_tilts, 3, 3)
 
     # Apply level angle X rotation
     level_x_rad = ts.level_angle_x * deg_to_rad
@@ -182,11 +186,7 @@ def get_particle_rotation_matrix_in_all_tilts(
         t = i % ts.n_tilts
 
         # Build particle rotation matrix from input angles (already in radians)
-        particle_matrix = euler_to_matrix(
-            angles[i, 0].unsqueeze(0),
-            angles[i, 1].unsqueeze(0),
-            angles[i, 2].unsqueeze(0)
-        ).squeeze(0)
+        particle_matrix = euler_to_matrix(angles[i].unsqueeze(0)).squeeze(0)
 
         # Build correction matrix from angle grids (XYZ extrinsic)
         angle_x_rad = grid_angle_x_interp[i] * deg_to_rad
@@ -259,10 +259,8 @@ def get_particle_angle_in_all_tilts(
     # Convert back to Euler angles
     result = torch.zeros((matrices.shape[0], 3), dtype=torch.float32)
     for i in range(matrices.shape[0]):
-        rot, tilt, psi = matrix_to_euler(matrices[i].unsqueeze(0))
-        result[i, 0] = rot[0]
-        result[i, 1] = tilt[0]
-        result[i, 2] = psi[0]
+        angles = matrix_to_euler(matrices[i].unsqueeze(0))
+        result[i] = angles[0]
 
     return result
 
@@ -295,11 +293,13 @@ def get_angles_in_one_tilt(
     deg_to_rad = torch.pi / 180.0
 
     # Build tilt rotation matrix for this specific tilt
-    rot_angle = torch.tensor([0.0], dtype=torch.float32)
-    tilt_angle = torch.tensor([(ts.angles[tilt_id] + ts.level_angle_y) * deg_to_rad], dtype=torch.float32)
-    psi_angle = torch.tensor([-ts.tilt_axis_angles[tilt_id] * deg_to_rad], dtype=torch.float32)
+    euler_angle = torch.tensor([[
+        0.0,  # rot
+        (ts.angles[tilt_id] + ts.level_angle_y) * deg_to_rad,  # tilt
+        -ts.tilt_axis_angles[tilt_id] * deg_to_rad  # psi
+    ]], dtype=torch.float32)
 
-    tilt_matrix = euler_to_matrix(rot_angle, tilt_angle, psi_angle).squeeze(0)
+    tilt_matrix = euler_to_matrix(euler_angle).squeeze(0)
 
     # Apply level angle X rotation
     level_x_rad = ts.level_angle_x * deg_to_rad
@@ -319,11 +319,7 @@ def get_angles_in_one_tilt(
         ], dtype=torch.float32).unsqueeze(0)
 
         # Build particle rotation matrix
-        particle_matrix = euler_to_matrix(
-            particle_angles[p, 0].unsqueeze(0),
-            particle_angles[p, 1].unsqueeze(0),
-            particle_angles[p, 2].unsqueeze(0)
-        ).squeeze(0)
+        particle_matrix = euler_to_matrix(particle_angles[p].unsqueeze(0)).squeeze(0)
 
         # Get angle corrections from grids
         angle_x_rad = ts.grid_angle_x.get_interpolated(grid_coords)[0] * deg_to_rad
@@ -346,9 +342,7 @@ def get_angles_in_one_tilt(
         )
 
         # Extract Euler angles
-        rot, tilt, psi = matrix_to_euler(rotation.unsqueeze(0))
-        result[p, 0] = rot[0]
-        result[p, 1] = tilt[0]
-        result[p, 2] = psi[0]
+        angles = matrix_to_euler(rotation.unsqueeze(0))
+        result[p] = angles[0]
 
     return result

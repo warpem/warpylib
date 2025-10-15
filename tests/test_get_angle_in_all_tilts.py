@@ -41,11 +41,7 @@ class TestGetAngleInAllTilts:
         # Convert result angles to matrices to verify they're valid rotations
         result_matrices = torch.zeros((3, 3, 3))
         for t in range(3):
-            result_matrices[t] = euler_to_matrix(
-                result[t, 0].unsqueeze(0),
-                result[t, 1].unsqueeze(0),
-                result[t, 2].unsqueeze(0)
-            ).squeeze(0)
+            result_matrices[t] = euler_to_matrix(result[t].unsqueeze(0)).squeeze(0)
 
         # Check that matrices are valid rotations
         for t in range(3):
@@ -257,10 +253,9 @@ class TestGetAngleInAllTilts:
         # Set non-zero angle grids
         # Grid values are in degrees
         from warpylib.cubic_grid import CubicGrid
-        import numpy as np
-        ts.grid_angle_x = CubicGrid((1, 1, 2), values=np.array([5.0, 10.0], dtype=np.float32))
-        ts.grid_angle_y = CubicGrid((1, 1, 2), values=np.array([3.0, 6.0], dtype=np.float32))
-        ts.grid_angle_z = CubicGrid((1, 1, 2), values=np.array([2.0, 4.0], dtype=np.float32))
+        ts.grid_angle_x = CubicGrid((1, 1, 2), values=torch.tensor([5.0, 10.0], dtype=torch.float32))
+        ts.grid_angle_y = CubicGrid((1, 1, 2), values=torch.tensor([3.0, 6.0], dtype=torch.float32))
+        ts.grid_angle_z = CubicGrid((1, 1, 2), values=torch.tensor([2.0, 4.0], dtype=torch.float32))
 
         coords = torch.tensor([
             [50.0, 50.0, 25.0],  # Tilt 0
@@ -331,8 +326,7 @@ class TestGetAngleInAllTilts:
 
         # Convert matrices back to angles
         for i in range(2):
-            rot, tilt, psi = matrix_to_euler(matrices[i].unsqueeze(0))
-            reconstructed = torch.tensor([rot[0], tilt[0], psi[0]])
+            reconstructed = matrix_to_euler(matrices[i].unsqueeze(0))[0]
 
             # Should match the angles from get_particle_angle_in_all_tilts
             assert torch.allclose(reconstructed, angles[i], atol=1e-5)
