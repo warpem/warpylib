@@ -122,13 +122,12 @@ def test_layout_transformation():
         print(f"Expected if transposed:\n{expected_transposed}")
         if torch.allclose(values, expected_transposed, atol=1e-5):
             print("ERROR: Data appears to be transposed!")
-            return False
+            assert False, "Data appears to be transposed!"
         else:
             print("ERROR: Unknown layout issue")
-            return False
+            assert False, f"Unknown layout issue. Max error: {torch.max(torch.abs(values - expected)).item()}"
 
     print("Layout test PASSED!")
-    return True
 
 
 if __name__ == "__main__":
