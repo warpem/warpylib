@@ -6,13 +6,91 @@ Replicates the functionality of WarpLib's CubicGrid.cs using torch-cubic-spline-
 
 from enum import IntFlag
 from typing import Optional, Tuple, Union
-import numpy as np
 import torch
 from torch_cubic_spline_grids import (
     CubicCatmullRomGrid4d
 )
 from lxml import etree
-from warpylib.interpolating_bspline import InterpolatingBSpline1d, InterpolatingBSpline2d, InterpolatingBSpline3d
+from warpylib.interpolating_bspline import (
+    find_coefs_1d, find_coefs_2d, find_coefs_3d,
+    interpolate_grid_1d, interpolate_grid_2d, interpolate_grid_3d,
+    EINSPLINE_BASIS_MATRIX
+)
+
+
+class InterpolatingBSplineOperator1D:
+    """Stateless 1D interpolating B-spline operator that preserves gradients."""
+
+    def __call__(self, data: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        """
+        Interpolate data at given coordinates.
+
+        Args:
+            data: (C, M) data tensor (gradients flow through this)
+            coords: (B, 1) coordinates in [0, 1]
+
+        Returns:
+            values: (B, C) interpolated values
+        """
+        # Ensure data has channel dimension
+        if data.ndim == 1:
+            data = data.unsqueeze(0)
+
+        # Compute coefficients (part of computational graph)
+        coefs = find_coefs_1d(data)
+
+        # Interpolate
+        return interpolate_grid_1d(coefs, coords, matrix=EINSPLINE_BASIS_MATRIX)
+
+
+class InterpolatingBSplineOperator2D:
+    """Stateless 2D interpolating B-spline operator that preserves gradients."""
+
+    def __call__(self, data: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        """
+        Interpolate data at given coordinates.
+
+        Args:
+            data: (C, Mx, My) data tensor (gradients flow through this)
+            coords: (B, 2) coordinates in [0, 1] x [0, 1]
+
+        Returns:
+            values: (B, C) interpolated values
+        """
+        # Ensure data has channel dimension
+        if data.ndim == 2:
+            data = data.unsqueeze(0)
+
+        # Compute coefficients (part of computational graph)
+        coefs = find_coefs_2d(data)
+
+        # Interpolate
+        return interpolate_grid_2d(coefs, coords, matrix=EINSPLINE_BASIS_MATRIX)
+
+
+class InterpolatingBSplineOperator3D:
+    """Stateless 3D interpolating B-spline operator that preserves gradients."""
+
+    def __call__(self, data: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        """
+        Interpolate data at given coordinates.
+
+        Args:
+            data: (C, Mx, My, Mz) data tensor (gradients flow through this)
+            coords: (B, 3) coordinates in [0, 1]^3
+
+        Returns:
+            values: (B, C) interpolated values
+        """
+        # Ensure data has channel dimension
+        if data.ndim == 3:
+            data = data.unsqueeze(0)
+
+        # Compute coefficients (part of computational graph)
+        coefs = find_coefs_3d(data)
+
+        # Interpolate
+        return interpolate_grid_3d(coefs, coords, matrix=EINSPLINE_BASIS_MATRIX)
 
 
 class Dimension(IntFlag):
@@ -56,8 +134,8 @@ class CubicGrid:
     def __init__(
         self,
         dimensions: Union[Tuple[int, int, int], Tuple[int, int, int, int]],
-        values: Optional[np.ndarray] = None,
-        margins: Union[Tuple[float, float, float], Tuple[float, float, float, float]] = None,
+        values: Optional[torch.Tensor] = None,
+        margins: Optional[Union[Tuple[float, float, float], Tuple[float, float, float, float]]] = None,
         centered_spacing: bool = False,
         gradient_direction: Optional[Dimension] = None,
         value_min: float = 0.0,
@@ -68,7 +146,8 @@ class CubicGrid:
 
         Args:
             dimensions: (X, Y, Z) or (X, Y, Z, W) grid dimensions
-            values: Flat array of values in einspline layout [(z*Y+y)*X+x] or [((w*Z+z)*Y+y)*X+x]
+            values: Flat torch tensor of values in einspline layout [(z*Y+y)*X+x] or [((w*Z+z)*Y+y)*X+x]
+                   If tensor has requires_grad=True, gradients will flow through interpolation.
             margins: (X, Y, Z) or (X, Y, Z, W) margins for grid boundaries
             centered_spacing: If True, automatically compute margins for centered spacing
             gradient_direction: Direction for gradient initialization (requires value_min/max)
@@ -84,32 +163,34 @@ class CubicGrid:
 
         # Handle centered spacing margins
         if centered_spacing:
-            margins = list(margins)
+            margins_list = list(margins)
             for i, dim in enumerate(self.dimensions):
                 if dim > 1:
-                    margins[i] = (1.0 / dim) / 2.0
+                    margins_list[i] = (1.0 / dim) / 2.0
                 else:
-                    margins[i] = 0.0
-            margins = tuple(margins)
+                    margins_list[i] = 0.0
+            margins = tuple(margins_list)
 
         self.margins = margins
 
         # Initialize values
         if values is not None:
-            self.values = np.array(values, dtype=np.float32).copy()
+            # Keep gradients - use .to() which preserves the computation graph
+            self.values = values.to(dtype=torch.float32)
         elif gradient_direction is not None:
             self.values = self._create_gradient_values(
                 gradient_direction, value_min, value_max
             )
         else:
-            self.values = np.zeros(int(np.prod(self.dimensions)), dtype=np.float32)
+            total_size = int(torch.tensor(self.dimensions).prod().item())
+            self.values = torch.zeros(total_size, dtype=torch.float32)
 
-        # Create torch spline grid
-        self._grid = self._create_torch_grid()
+        # Create torch spline grid operator and data view
+        self._grid_operator, self._grid_data = self._create_torch_grid()
 
     @property
-    def flat_values(self) -> np.ndarray:
-        """Get flat values array (einspline layout)"""
+    def flat_values(self) -> torch.Tensor:
+        """Get flat values tensor (einspline layout)"""
         return self.values
 
     def _get_dimensions(self, dims: Union[Tuple[int, int, int], Tuple[int, int, int, int]]) -> DimensionSets:
@@ -143,9 +224,10 @@ class CubicGrid:
 
     def _create_gradient_values(
         self, gradient_direction: Dimension, value_min: float, value_max: float
-    ) -> np.ndarray:
+    ) -> torch.Tensor:
         """Create values with a gradient in specified direction"""
-        values = np.zeros(int(np.prod(self.dimensions)), dtype=np.float32)
+        total_size = int(torch.tensor(self.dimensions).prod().item())
+        values = torch.zeros(total_size, dtype=torch.float32)
 
         if len(self.dimensions) == 4:
             x_dim, y_dim, z_dim, w_dim = self.dimensions
@@ -203,45 +285,41 @@ class CubicGrid:
 
         return values
 
-    def _create_torch_grid(
-        self,
-    ) -> Union[CubicCatmullRomGrid4d, InterpolatingBSpline1d, InterpolatingBSpline2d, InterpolatingBSpline3d, None]:
-        """Create torch spline grid with proper data transformation"""
-        if self.dimension_set == DimensionSets.NONE:
-            return None
+    def _create_torch_grid(self) -> tuple:
+        """Create torch spline grid operator and reshaped data view.
 
-        # 4D case
+        Returns a tuple of (operator, data_view) where:
+        - operator: stateless interpolator that takes (data, coords) -> values
+        - data_view: reshaped view of self.values for the operator (preserves gradients)
+        """
+        if self.dimension_set == DimensionSets.NONE:
+            return (None, None)
+
+        # 4D case - use CubicCatmullRomGrid4d (TODO: make this an operator too)
         if self.dimension_set == DimensionSets.XYZW:
             x_dim, y_dim, z_dim, w_dim = self.dimensions
-            # Reshape from einspline layout to torch layout
-            # Einspline: [((w*Z+z)*Y+y)*X+x] -> Torch: [W, Z, Y, X]
             data_torch = self.values.reshape((w_dim, z_dim, y_dim, x_dim))
-            return CubicCatmullRomGrid4d.from_grid_data(torch.from_numpy(data_torch))
+            return (CubicCatmullRomGrid4d.from_grid_data(data_torch), None)
 
         x_dim, y_dim, z_dim = self.dimensions[:3]
 
         # 3D case
         if self.dimension_set == DimensionSets.XYZ:
-            # Reshape from einspline layout to torch layout
-            # Einspline: [(z*Y+y)*X+x] -> Torch: [Z, Y, X]
             data_torch = self.values.reshape((z_dim, y_dim, x_dim))
-            return InterpolatingBSpline3d.from_grid_data(torch.from_numpy(data_torch))
+            return (InterpolatingBSplineOperator3D(), data_torch)
 
         # 2D cases
         elif self.dimension_set == DimensionSets.XY:
-            # Data is [y, x]
             data_torch = self.values.reshape((y_dim, x_dim))
-            return InterpolatingBSpline2d.from_grid_data(torch.from_numpy(data_torch))
+            return (InterpolatingBSplineOperator2D(), data_torch)
 
         elif self.dimension_set == DimensionSets.XZ:
-            # Data is [z, x]
             data_torch = self.values.reshape((z_dim, x_dim))
-            return InterpolatingBSpline2d.from_grid_data(torch.from_numpy(data_torch))
+            return (InterpolatingBSplineOperator2D(), data_torch)
 
         elif self.dimension_set == DimensionSets.YZ:
-            # Data is [z, y]
             data_torch = self.values.reshape((z_dim, y_dim))
-            return InterpolatingBSpline2d.from_grid_data(torch.from_numpy(data_torch))
+            return (InterpolatingBSplineOperator2D(), data_torch)
 
         # 1D cases
         elif self.dimension_set in (DimensionSets.X, DimensionSets.Y, DimensionSets.Z):
@@ -251,24 +329,23 @@ class CubicGrid:
                 data_torch = self.values.reshape(y_dim)
             else:  # Z
                 data_torch = self.values.reshape(z_dim)
-            return InterpolatingBSpline1d.from_grid_data(torch.from_numpy(data_torch))
+            return (InterpolatingBSplineOperator1D(), data_torch)
 
-        return None
+        return (None, None)
 
     def _transform_coords_to_torch(
-        self, coords: np.ndarray
-    ) -> Tuple[torch.Tensor, np.ndarray]:
+        self, coords: torch.Tensor
+    ) -> torch.Tensor:
         """
         Transform einspline coordinates to torch coordinates.
 
         Args:
-            coords: Nx3 or Nx4 array of (x, y, z) or (x, y, z, w) coordinates in [0, 1] range
+            coords: Nx3 or Nx4 tensor of (x, y, z) or (x, y, z, w) coordinates in [0, 1] range
 
         Returns:
-            (torch_coords, coord_mask) where torch_coords are transformed and
-            coord_mask indicates which dimensions are active
+            torch_coords: transformed coordinates for torch spline grids
         """
-        coords_transformed = coords.copy()
+        coords_transformed = coords.clone()
 
         # Apply margin transformation if needed
         if any(m > 0 for m in self.margins):
@@ -312,47 +389,53 @@ class CubicGrid:
         else:  # NONE
             torch_coords = coords_transformed
 
-        return torch.from_numpy(torch_coords).float(), coords_transformed
+        return torch_coords.to(dtype=torch.float32)
 
     def get_interpolated(
-        self, coords: Union[np.ndarray, Tuple[float, ...]]
-    ) -> np.ndarray:
+        self, coords: Union[torch.Tensor, Tuple[float, ...]]
+    ) -> torch.Tensor:
         """
         Get interpolated values at specified coordinates.
 
         Args:
-            coords: Either a single (x, y, z) or (x, y, z, w) tuple, or Nx3/Nx4 array of coordinates
+            coords: Either a single (x, y, z) or (x, y, z, w) tuple, or Nx3/Nx4 tensor of coordinates
                    Coordinates should be in [0, 1] range
 
         Returns:
-            Array of interpolated values
+            Tensor of interpolated values. Gradients will flow if input has requires_grad=True.
         """
         # Handle single coordinate
         if isinstance(coords, (tuple, list)):
-            coords = np.array([coords], dtype=np.float32)
+            coords = torch.tensor([coords], dtype=torch.float32)
+        elif not isinstance(coords, torch.Tensor):
+            coords = torch.tensor(coords, dtype=torch.float32)
         else:
-            coords = np.array(coords, dtype=np.float32)
+            coords = coords.to(dtype=torch.float32)
 
-        # Ensure 2D array
+        # Ensure 2D tensor
         if coords.ndim == 1:
             coords = coords.reshape(1, -1)
 
         # Handle degenerate case
-        if self._grid is None or self.dimension_set == DimensionSets.NONE:
-            return np.full(len(coords), self.values[0], dtype=np.float32)
+        if self._grid_operator is None or self.dimension_set == DimensionSets.NONE:
+            return torch.full((len(coords),), self.values[0].item(), dtype=torch.float32)
 
         # Transform coordinates
-        torch_coords, _ = self._transform_coords_to_torch(coords)
+        torch_coords = self._transform_coords_to_torch(coords)
 
-        # Evaluate spline
-        with torch.no_grad():
-            result = self._grid(torch_coords).squeeze(-1).numpy()
+        # Evaluate spline (gradients will flow through data -> operator -> result)
+        if self._grid_data is not None:
+            # Use our operator-based approach (preserves gradients)
+            result = self._grid_operator(self._grid_data, torch_coords).squeeze(-1)
+        else:
+            # 4D case still using old module (TODO: fix this)
+            result = self._grid_operator(torch_coords).squeeze(-1)
 
         return result
 
     def get_interpolated_grid(
         self, value_grid: Tuple[int, int, int], border: Tuple[float, float, float]
-    ) -> np.ndarray:
+    ) -> torch.Tensor:
         """
         Get interpolated values on a regular grid.
 
@@ -361,7 +444,7 @@ class CubicGrid:
             border: (X, Y, Z) border offsets
 
         Returns:
-            Flat array of interpolated values in einspline layout
+            Flat tensor of interpolated values in einspline layout
         """
         vx, vy, vz = value_grid
         bx, by, bz = border
@@ -377,16 +460,17 @@ class CubicGrid:
         offset_z = 0.5 if vz == 1 else bz
 
         # Generate coordinates in einspline order
-        coords = np.zeros((int(np.prod(value_grid)), 3), dtype=np.float32)
+        total_size = int(torch.tensor(value_grid).prod().item())
+        coords = torch.zeros((total_size, 3), dtype=torch.float32)
         idx = 0
         for z in range(vz):
             for y in range(vy):
                 for x in range(vx):
-                    coords[idx] = [
+                    coords[idx] = torch.tensor([
                         x * step_x + offset_x,
                         y * step_y + offset_y,
                         z * step_z + offset_z,
-                    ]
+                    ])
                     idx += 1
 
         return self.get_interpolated(coords)
@@ -408,12 +492,13 @@ class CubicGrid:
         step_z = 1.0 / max(1, nz - 1)
 
         # Generate coordinates
-        result = np.zeros(int(np.prod(new_size)), dtype=np.float32)
+        total_size = int(torch.tensor(new_size).prod().item())
+        result = torch.zeros(total_size, dtype=torch.float32)
         idx = 0
         for z in range(nz):
             for y in range(ny):
                 for x in range(nx):
-                    coord = np.array([[x * step_x, y * step_y, z * step_z]])
+                    coord = torch.tensor([[x * step_x, y * step_y, z * step_z]])
                     result[idx] = self.get_interpolated(coord)[0]
                     idx += 1
 
@@ -429,14 +514,14 @@ class CubicGrid:
             New 1D CubicGrid along Z axis
         """
         x_dim, y_dim, z_dim = self.dimensions
-        collapsed = np.zeros(z_dim, dtype=np.float32)
+        collapsed = torch.zeros(z_dim, dtype=torch.float32)
 
         for z in range(z_dim):
             mean = 0.0
             for y in range(y_dim):
                 for x in range(x_dim):
                     idx = (z * y_dim + y) * x_dim + x
-                    mean += self.values[idx]
+                    mean += self.values[idx].item()
             mean /= x_dim * y_dim
             collapsed[z] = mean
 
@@ -451,24 +536,24 @@ class CubicGrid:
             New 2D CubicGrid in XY plane
         """
         x_dim, y_dim, z_dim = self.dimensions
-        collapsed = np.zeros(x_dim * y_dim, dtype=np.float32)
+        collapsed = torch.zeros(x_dim * y_dim, dtype=torch.float32)
 
         for y in range(y_dim):
             for x in range(x_dim):
                 mean = 0.0
                 for z in range(z_dim):
                     idx = (z * y_dim + y) * x_dim + x
-                    mean += self.values[idx]
+                    mean += self.values[idx].item()
                 mean /= z_dim
                 collapsed[y * x_dim + x] = mean
 
         has_margins = any(m > 0 for m in self.margins)
         return CubicGrid((x_dim, y_dim, 1), collapsed, centered_spacing=has_margins)
 
-    def get_slice_xy(self, z: int) -> np.ndarray:
+    def get_slice_xy(self, z: int) -> torch.Tensor:
         """Get XY slice at given Z index"""
         x_dim, y_dim, _ = self.dimensions
-        result = np.zeros(x_dim * y_dim, dtype=np.float32)
+        result = torch.zeros(x_dim * y_dim, dtype=torch.float32)
 
         for y in range(y_dim):
             for x in range(x_dim):
@@ -477,10 +562,10 @@ class CubicGrid:
 
         return result
 
-    def get_slice_xz(self, y: int) -> np.ndarray:
+    def get_slice_xz(self, y: int) -> torch.Tensor:
         """Get XZ slice at given Y index"""
         x_dim, y_dim, z_dim = self.dimensions
-        result = np.zeros(x_dim * z_dim, dtype=np.float32)
+        result = torch.zeros(x_dim * z_dim, dtype=torch.float32)
 
         for z in range(z_dim):
             for x in range(x_dim):
@@ -489,10 +574,10 @@ class CubicGrid:
 
         return result
 
-    def get_slice_yz(self, x: int) -> np.ndarray:
+    def get_slice_yz(self, x: int) -> torch.Tensor:
         """Get YZ slice at given X index"""
         x_dim, y_dim, z_dim = self.dimensions
-        result = np.zeros(y_dim * z_dim, dtype=np.float32)
+        result = torch.zeros(y_dim * z_dim, dtype=torch.float32)
 
         for z in range(z_dim):
             for y in range(y_dim):
@@ -529,7 +614,7 @@ class CubicGrid:
                             node.set("Z", str(z))
                             node.set("W", str(w))
                             idx = ((w * z_dim + z) * y_dim + y) * x_dim + x
-                            node.set("Value", f"{self.values[idx]:.9g}")
+                            node.set("Value", f"{self.values[idx].item():.9g}")
         else:
             # 3D grid (or lower)
             x_dim, y_dim, z_dim = self.dimensions[:3]
@@ -551,7 +636,7 @@ class CubicGrid:
                         node.set("Y", str(y))
                         node.set("Z", str(z))
                         idx = (z * y_dim + y) * x_dim + x
-                        node.set("Value", f"{self.values[idx]:.9g}")
+                        node.set("Value", f"{self.values[idx].item():.9g}")
 
     @staticmethod
     def load_from_xml(element: etree._Element) -> "CubicGrid":
@@ -582,8 +667,9 @@ class CubicGrid:
             margin_w = float(element.get("MarginW", "0"))
             margins = (margin_x, margin_y, margin_z, margin_w)
 
-            # Initialize values array
-            values = np.zeros(int(np.prod(dimensions)), dtype=np.float32)
+            # Initialize values tensor
+            total_size = int(torch.tensor(dimensions).prod().item())
+            values = torch.zeros(total_size, dtype=torch.float32)
 
             # Load node values
             for node in element.findall("Node"):
@@ -607,8 +693,9 @@ class CubicGrid:
             margin_z = float(element.get("MarginZ", "0"))
             margins = (margin_x, margin_y, margin_z)
 
-            # Initialize values array
-            values = np.zeros(int(np.prod(dimensions)), dtype=np.float32)
+            # Initialize values tensor
+            total_size = int(torch.tensor(dimensions).prod().item())
+            values = torch.zeros(total_size, dtype=torch.float32)
 
             # Load node values
             for node in element.findall("Node"):
