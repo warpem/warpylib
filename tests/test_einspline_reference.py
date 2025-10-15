@@ -40,21 +40,20 @@ def test_1d_against_einspline_reference():
     # Create CubicGrid (1D case: only X dimension is active)
     grid = CubicGrid(
         dimensions=(len(grid_values), 1, 1),
-        values=grid_values.numpy(),
+        values=grid_values,
         margins=(0.0, 0.0, 0.0)
     )
 
     # Evaluate at reference points
     # CubicGrid expects (N, 3) coordinates, so we need to add dummy Y and Z
-    coords_3d = np.zeros((len(eval_points), 3), dtype=np.float32)
-    coords_3d[:, 0] = eval_points.numpy()  # X coordinates
+    coords_3d = torch.zeros((len(eval_points), 3), dtype=torch.float32)
+    coords_3d[:, 0] = eval_points  # X coordinates
     coords_3d[:, 1] = 0.0  # Dummy Y
     coords_3d[:, 2] = 0.0  # Dummy Z
 
     computed_values = grid.get_interpolated(coords_3d)
 
-    # Convert to torch for error computation
-    computed_values = torch.from_numpy(computed_values)
+    # Compute errors (computed_values is already a torch tensor)
     errors = torch.abs(computed_values - expected_values)
     max_error = torch.max(errors).item()
     mean_error = torch.mean(errors).item()
@@ -123,11 +122,11 @@ def test_2d_against_einspline_reference():
 
     # Create CubicGrid (2D case: X and Y dimensions are active, Z=1)
     # Need to flatten the 2D grid to einspline layout: [(y)*X+x]
-    values_flat = np.zeros(Mx * My, dtype=np.float32)
+    values_flat = torch.zeros(Mx * My, dtype=torch.float32)
     for iy in range(My):
         for ix in range(Mx):
             idx = iy * Mx + ix  # Einspline layout for 2D: [(y)*X+x]
-            values_flat[idx] = grid_values[ix, iy].item()
+            values_flat[idx] = grid_values[ix, iy]
 
     grid = CubicGrid(
         dimensions=(Mx, My, 1),
@@ -137,15 +136,14 @@ def test_2d_against_einspline_reference():
 
     # Evaluate at reference points
     # CubicGrid expects (N, 3) coordinates, add dummy Z
-    coords_3d = np.zeros((len(eval_points), 3), dtype=np.float32)
-    coords_3d[:, 0] = eval_points[:, 0].numpy()  # X coordinates
-    coords_3d[:, 1] = eval_points[:, 1].numpy()  # Y coordinates
+    coords_3d = torch.zeros((len(eval_points), 3), dtype=torch.float32)
+    coords_3d[:, 0] = eval_points[:, 0]  # X coordinates
+    coords_3d[:, 1] = eval_points[:, 1]  # Y coordinates
     coords_3d[:, 2] = 0.0  # Dummy Z
 
     computed_values = grid.get_interpolated(coords_3d)
 
-    # Convert to torch for error computation
-    computed_values = torch.from_numpy(computed_values)
+    # Compute errors (computed_values is already a torch tensor)
     errors = torch.abs(computed_values - expected_values)
     max_error = torch.max(errors).item()
     mean_error = torch.mean(errors).item()
@@ -239,12 +237,12 @@ def test_3d_against_einspline_reference():
 
     # Create CubicGrid (3D case: X, Y, and Z dimensions are all active)
     # Need to flatten the 3D grid to einspline layout: [(z)*X*Y+(y)*X+x]
-    values_flat = np.zeros(Mx * My * Mz, dtype=np.float32)
+    values_flat = torch.zeros(Mx * My * Mz, dtype=torch.float32)
     for iz in range(Mz):
         for iy in range(My):
             for ix in range(Mx):
                 idx = iz * Mx * My + iy * Mx + ix  # Einspline layout for 3D: [(z)*X*Y+(y)*X+x]
-                values_flat[idx] = grid_values[ix, iy, iz].item()
+                values_flat[idx] = grid_values[ix, iy, iz]
 
     grid = CubicGrid(
         dimensions=(Mx, My, Mz),
@@ -253,12 +251,11 @@ def test_3d_against_einspline_reference():
     )
 
     # Evaluate at reference points
-    coords_3d = eval_points.numpy()
+    coords_3d = eval_points
 
     computed_values = grid.get_interpolated(coords_3d)
 
-    # Convert to torch for error computation
-    computed_values = torch.from_numpy(computed_values)
+    # Compute errors (computed_values is already a torch tensor)
     errors = torch.abs(computed_values - expected_values)
     max_error = torch.max(errors).item()
     mean_error = torch.mean(errors).item()
