@@ -28,11 +28,13 @@ class TestTiltSeriesCSharpComparison:
         xml_path = test_dir / "TS_1.xml"
         star_path = test_dir / "TS_1.star"
 
+        image_dimensions = torch.tensor([5760.0, 4092.0]) * 0.834 # K3 image dimensions x pixel size
+
         # Load the TiltSeries from XML
         ts = TiltSeries(
             path=str(xml_path),
-            volume_dimensions_physical=torch.tensor([1000.0, 1000.0, 1000.0]),
-            image_dimensions_physical=torch.tensor([1000.0, 1000.0])
+            volume_dimensions_physical=torch.tensor([4000.0, 5700.0, 1000.0]) * 0.834,  # tomogram dimensions are rotated by 90 deg vs. micrographs
+            image_dimensions_physical=image_dimensions
         )
 
         # Load the reference data from the STAR file
@@ -150,14 +152,14 @@ class TestTiltSeriesCSharpComparison:
         xml_path = test_dir / "TS_1.xml"
         star_path = test_dir / "TS_1.star"
 
-        # Image dimensions as defined in test (1000x1000 Angstroms)
-        image_dimensions = torch.tensor([5760.0, 4092.0]) * 0.834
+        # Image dimensions as defined in test
+        image_dimensions = torch.tensor([5760.0, 4092.0]) * 0.834 # K3 image dimensions x pixel size
         image_center = image_dimensions / 2
 
         # Load the TiltSeries from XML
         ts = TiltSeries(
             path=str(xml_path),
-            volume_dimensions_physical=torch.tensor([4000.0, 5700.0, 1000.0]) * 0.834,
+            volume_dimensions_physical=torch.tensor([4000.0, 5700.0, 1000.0]) * 0.834,  # tomogram dimensions are rotated by 90 deg vs. micrographs
             image_dimensions_physical=image_dimensions
         )
 
