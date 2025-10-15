@@ -269,6 +269,90 @@ def interpolate_grid_1d(
     return values
 
 
+def find_coefs_3d(
+    data: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Find B-spline coefficients for 3D data with natural boundary conditions.
+
+    Uses separable approach:
+    1. Solve 1D problems along X-direction for each (Y, Z) position
+    2. Solve 1D problems along Y-direction for each (X, Z) position
+    3. Solve 1D problems along Z-direction for each (X, Y) position
+
+    Args:
+        data: (C, Mx, My, Mz) data values to interpolate
+
+    Returns:
+        coefs: (C, Mx+2, My+2, Mz+2) B-spline coefficients
+    """
+    if data.ndim == 3:
+        data = data.unsqueeze(0)
+        squeeze_output = True
+    else:
+        squeeze_output = False
+
+    C, Mx, My, Mz = data.shape
+
+    # Build system matrices (reused for all channels and rows/columns)
+    Ax = _build_1d_system_matrix(Mx, dtype=data.dtype, device=data.device)
+    Ay = _build_1d_system_matrix(My, dtype=data.dtype, device=data.device)
+    Az = _build_1d_system_matrix(Mz, dtype=data.dtype, device=data.device)
+
+    # Step 1: Solve along X-direction for each (Y, Z) position
+    # This expands Mx -> Mx+2 while keeping My, Mz unchanged
+    coefs_x = torch.zeros(C, Mx + 2, My, Mz, dtype=data.dtype, device=data.device)
+
+    for c in range(C):
+        for j in range(My):
+            for k in range(Mz):
+                # Extract line: data[c, :, j, k] is (Mx,)
+                b = torch.zeros(Mx + 2, dtype=data.dtype, device=data.device)
+                b[0] = 0.0
+                b[1:Mx+1] = data[c, :, j, k]
+                b[Mx+1] = 0.0
+
+                # Solve and store
+                coefs_x[c, :, j, k] = torch.linalg.solve(Ax, b)
+
+    # Step 2: Solve along Y-direction for each (X, Z) position
+    # This expands My -> My+2, shape becomes (C, Mx+2, My+2, Mz)
+    coefs_xy = torch.zeros(C, Mx + 2, My + 2, Mz, dtype=data.dtype, device=data.device)
+
+    for c in range(C):
+        for i in range(Mx + 2):
+            for k in range(Mz):
+                # Extract line: coefs_x[c, i, :, k] is (My,)
+                b = torch.zeros(My + 2, dtype=data.dtype, device=data.device)
+                b[0] = 0.0
+                b[1:My+1] = coefs_x[c, i, :, k]
+                b[My+1] = 0.0
+
+                # Solve and store
+                coefs_xy[c, i, :, k] = torch.linalg.solve(Ay, b)
+
+    # Step 3: Solve along Z-direction for each (X, Y) position
+    # This expands Mz -> Mz+2, final shape: (C, Mx+2, My+2, Mz+2)
+    coefs = torch.zeros(C, Mx + 2, My + 2, Mz + 2, dtype=data.dtype, device=data.device)
+
+    for c in range(C):
+        for i in range(Mx + 2):
+            for j in range(My + 2):
+                # Extract line: coefs_xy[c, i, j, :] is (Mz,)
+                b = torch.zeros(Mz + 2, dtype=data.dtype, device=data.device)
+                b[0] = 0.0
+                b[1:Mz+1] = coefs_xy[c, i, j, :]
+                b[Mz+1] = 0.0
+
+                # Solve and store
+                coefs[c, i, j, :] = torch.linalg.solve(Az, b)
+
+    if squeeze_output:
+        coefs = coefs.squeeze(0)
+
+    return coefs
+
+
 def interpolate_grid_2d(
     data: torch.Tensor,
     u: torch.Tensor,
@@ -378,6 +462,132 @@ def interpolate_grid_2d(
         # Apply basis in Y: intermediate (B, 4) @ basis_y
         # For each b, sum over 4 intermediate values weighted by basis_y[:, b]
         values[:, c] = torch.sum(intermediate * basis_y.T, dim=1)
+
+    return values
+
+
+def interpolate_grid_3d(
+    data: torch.Tensor,
+    u: torch.Tensor,
+    matrix: Optional[torch.Tensor] = None,
+    monotonicity: Optional[str] = None,
+) -> torch.Tensor:
+    """
+    Interpolate 3D grid data using interpolating B-splines.
+
+    This function signature matches torch-cubic-spline-grids API for compatibility.
+
+    Args:
+        data: (C, Mx+2, My+2, Mz+2) padded grid data (B-spline coefficients)
+        u: (B, 3) batch of coordinates in [0, 1]^3
+        matrix: Ignored (for API compatibility - einspline uses fixed basis matrix)
+        monotonicity: Optional monotonicity constraint (not yet implemented)
+
+    Returns:
+        values: (B, C) interpolated values
+    """
+    _ = matrix  # Unused, for API compatibility
+    if monotonicity is not None:
+        raise NotImplementedError("Monotonicity constraints not yet implemented for interpolating B-splines")
+
+    C, Mx_plus_2, My_plus_2, Mz_plus_2 = data.shape
+    Mx = Mx_plus_2 - 2
+    My = My_plus_2 - 2
+    Mz = Mz_plus_2 - 2
+
+    # Extract x, y, z coordinates
+    ux = u[:, 0]  # (B,)
+    uy = u[:, 1]  # (B,)
+    uz = u[:, 2]  # (B,)
+
+    # Get basis matrix on correct device
+    basis_matrix = EINSPLINE_BASIS_MATRIX.to(device=data.device, dtype=data.dtype)
+
+    # Transform coordinates to grid space
+    ux_norm = ux * (Mx - 1)
+    uy_norm = uy * (My - 1)
+    uz_norm = uz * (Mz - 1)
+
+    # Find grid cells and local coordinates for X dimension
+    ix = torch.floor(ux_norm).long()
+    tx = ux_norm - ix.float()
+
+    # Handle X boundary cases
+    mask_low_x = ux_norm < 0
+    ix = torch.where(mask_low_x, torch.zeros_like(ix), ix)
+    tx = torch.where(mask_low_x, ux_norm, tx)
+
+    mask_high_x = ux_norm >= Mx - 2
+    ix = torch.where(mask_high_x, torch.full_like(ix, Mx - 2), ix)
+    tx = torch.where(mask_high_x, ux_norm - (Mx - 2), tx)
+
+    # Find grid cells and local coordinates for Y dimension
+    iy = torch.floor(uy_norm).long()
+    ty = uy_norm - iy.float()
+
+    # Handle Y boundary cases
+    mask_low_y = uy_norm < 0
+    iy = torch.where(mask_low_y, torch.zeros_like(iy), iy)
+    ty = torch.where(mask_low_y, uy_norm, ty)
+
+    mask_high_y = uy_norm >= My - 2
+    iy = torch.where(mask_high_y, torch.full_like(iy, My - 2), iy)
+    ty = torch.where(mask_high_y, uy_norm - (My - 2), ty)
+
+    # Find grid cells and local coordinates for Z dimension
+    iz = torch.floor(uz_norm).long()
+    tz = uz_norm - iz.float()
+
+    # Handle Z boundary cases
+    mask_low_z = uz_norm < 0
+    iz = torch.where(mask_low_z, torch.zeros_like(iz), iz)
+    tz = torch.where(mask_low_z, uz_norm, tz)
+
+    mask_high_z = uz_norm >= Mz - 2
+    iz = torch.where(mask_high_z, torch.full_like(iz, Mz - 2), iz)
+    tz = torch.where(mask_high_z, uz_norm - (Mz - 2), tz)
+
+    # Build power vectors
+    tx_powers = torch.stack([tx**3, tx**2, tx, torch.ones_like(tx)], dim=1)  # (B, 4)
+    ty_powers = torch.stack([ty**3, ty**2, ty, torch.ones_like(ty)], dim=1)  # (B, 4)
+    tz_powers = torch.stack([tz**3, tz**2, tz, torch.ones_like(tz)], dim=1)  # (B, 4)
+
+    # Compute basis functions
+    basis_x = torch.matmul(basis_matrix, tx_powers.T)  # (4, B)
+    basis_y = torch.matmul(basis_matrix, ty_powers.T)  # (4, B)
+    basis_z = torch.matmul(basis_matrix, tz_powers.T)  # (4, B)
+
+    # Evaluate for each channel
+    B = u.shape[0]
+    values = torch.zeros(B, C, dtype=data.dtype, device=data.device)
+
+    for c in range(C):
+        # Extract 4x4x4 control point grid for each query point
+        # We need control points at positions: [ix+i, iy+j, iz+k] for i,j,k in 0..3
+        # Result will be (B, 4, 4, 4)
+        control_grid = torch.zeros(B, 4, 4, 4, dtype=data.dtype, device=data.device)
+
+        for i in range(4):
+            for j in range(4):
+                for k in range(4):
+                    control_grid[:, i, j, k] = data[c, ix + i, iy + j, iz + k]
+
+        # Apply separable 3D cubic interpolation
+        # Step 1: Apply basis in X direction -> (B, 4, 4)
+        intermediate_xy = torch.zeros(B, 4, 4, dtype=data.dtype, device=data.device)
+        for j in range(4):
+            for k in range(4):
+                # control_grid[:, :, j, k]: (B, 4) - controls in X direction at (y, z) offset (j, k)
+                intermediate_xy[:, j, k] = torch.sum(control_grid[:, :, j, k] * basis_x.T, dim=1)
+
+        # Step 2: Apply basis in Y direction -> (B, 4)
+        intermediate_z = torch.zeros(B, 4, dtype=data.dtype, device=data.device)
+        for k in range(4):
+            # intermediate_xy[:, :, k]: (B, 4) - intermediate values in Y direction at z offset k
+            intermediate_z[:, k] = torch.sum(intermediate_xy[:, :, k] * basis_y.T, dim=1)
+
+        # Step 3: Apply basis in Z direction -> (B,)
+        values[:, c] = torch.sum(intermediate_z * basis_z.T, dim=1)
 
     return values
 
@@ -740,6 +950,173 @@ class InterpolatingBSpline2d(nn.Module):
 
         Returns:
             Initialized InterpolatingBSpline2d instance
+        """
+        grid = cls()
+        grid.data = data
+        return grid
+
+
+class InterpolatingBSpline3d(nn.Module):
+    """
+    3D Interpolating B-spline grid with API compliance to torch-cubic-spline-grids.
+
+    This implements cubic B-splines that interpolate (pass through) the data points,
+    matching einspline's behavior with natural boundary conditions.
+    The coefficients are computed by solving separable linear systems.
+
+    Args:
+        resolution: Number of data points per dimension (tuple of 3 ints)
+        n_channels: Number of channels
+        minibatch_size: Maximum batch size for evaluation
+    """
+
+    ndim: int = 3
+    _interpolation_function: Callable = staticmethod(interpolate_grid_3d)
+    _interpolation_matrix: torch.Tensor = EINSPLINE_BASIS_MATRIX
+    _data: nn.Parameter
+    _minibatch_size: int
+
+    def __init__(
+        self,
+        resolution: Optional[Tuple[int, int, int]] = None,
+        n_channels: int = 1,
+        minibatch_size: int = 1_000_000,
+        monotonicity: Optional[str] = None,
+    ):
+        super().__init__()
+
+        if resolution is None:
+            resolution = (2, 2, 2)
+
+        # Initialize data as learnable parameters
+        grid_shape = (n_channels, *resolution)
+        self.data = torch.zeros(size=grid_shape)
+
+        self._minibatch_size = minibatch_size
+        self._monotonicity = monotonicity
+
+        # Register interpolation matrix as buffer
+        self.register_buffer(
+            name='interpolation_matrix',
+            tensor=self._interpolation_matrix,
+            persistent=False,
+        )
+
+        # Cache for coefficients
+        self._coefs_cache = None
+        self._data_version = None
+
+    @property
+    def data(self) -> torch.Tensor:
+        """Get data values."""
+        return self._data.detach()
+
+    @data.setter
+    def data(self, grid_data: torch.Tensor) -> None:
+        """Set data values."""
+        grid_data = coerce_to_multichannel_grid(grid_data, grid_ndim=self.ndim)
+        self._data = nn.Parameter(grid_data)
+        self._coefs_cache = None  # Invalidate cache
+
+    @property
+    def n_channels(self) -> int:
+        """Number of channels in the grid."""
+        return int(self._data.size(0))
+
+    @property
+    def resolution(self) -> Tuple[int, ...]:
+        """Grid resolution (number of data points per dimension)."""
+        return tuple(self._data.shape[1:])
+
+    def _compute_coefs(self) -> torch.Tensor:
+        """Compute B-spline coefficients from data."""
+        return find_coefs_3d(self._data)
+
+    def _get_coefs_cached(self) -> torch.Tensor:
+        """Get coefficients with caching for inference."""
+        current_version = self._data._version
+        if self._coefs_cache is None or self._data_version != current_version:
+            with torch.no_grad():
+                self._coefs_cache = self._compute_coefs()
+                self._data_version = current_version
+        return self._coefs_cache
+
+    def _interpolate(self, u: torch.Tensor) -> torch.Tensor:
+        """Interpolate at given coordinates (internal method)."""
+        # Compute coefficients (this will be part of computational graph if training)
+        if self.training or torch.is_grad_enabled():
+            coefs = self._compute_coefs()
+        else:
+            coefs = self._get_coefs_cached()
+
+        return self._interpolation_function(
+            coefs,
+            u,
+            matrix=self.interpolation_matrix,
+            monotonicity=self._monotonicity,
+        )
+
+    def _coerce_to_batched_coordinates(self, u: torch.Tensor) -> torch.Tensor:
+        """Convert input coordinates to batched format (B, 3)."""
+        u = torch.atleast_1d(torch.as_tensor(u, dtype=torch.float32))
+        self._input_is_coordinate_like = u.shape[-1] == self.ndim
+
+        if self._input_is_coordinate_like is False:
+            raise ValueError(
+                f'For 3D grids, coordinates must have shape (..., 3), got {u.shape}'
+            )
+
+        u = torch.atleast_2d(u)  # add batch dimension if missing
+        u, self._packed_shapes = einops.pack([u], pattern='* coords')
+
+        if u.shape[-1] != self.ndim:
+            ndim = u.shape[-1]
+            raise ValueError(
+                f'Cannot interpolate on a {self.ndim}D grid with {ndim}D coordinates'
+            )
+        return u
+
+    def _unpack_interpolated_output(self, interpolated: torch.Tensor) -> torch.Tensor:
+        """Convert batched output back to input format."""
+        [interpolated] = einops.unpack(
+            interpolated, packed_shapes=self._packed_shapes, pattern='* coords'
+        )
+        return interpolated
+
+    def forward(self, u: torch.Tensor) -> torch.Tensor:
+        """
+        Evaluate spline at given coordinates.
+
+        Args:
+            u: Coordinates in [0, 1]^3 to evaluate. Must have shape:
+               - (N, 3) for N points
+               - (..., 3) for arbitrary batch shapes
+
+        Returns:
+            values: Interpolated values with shape:
+                    - (N, C) for C channels
+                    - (..., C) for arbitrary batch shapes
+        """
+        u = self._coerce_to_batched_coordinates(u)  # (B, 3)
+
+        interpolated = [
+            self._interpolate(minibatch_u)
+            for minibatch_u in batch_iterator(u, n=self._minibatch_size)
+        ]  # List[Tensor[(B, C)]]
+        interpolated = torch.cat(interpolated, dim=0)  # (B, C)
+
+        return self._unpack_interpolated_output(interpolated)
+
+    @classmethod
+    def from_grid_data(cls, data: torch.Tensor) -> "InterpolatingBSpline3d":
+        """
+        Create spline from existing data (API-compliant factory method).
+
+        Args:
+            data: (Mx, My, Mz) or (C, Mx, My, Mz) data values
+
+        Returns:
+            Initialized InterpolatingBSpline3d instance
         """
         grid = cls()
         grid.data = data

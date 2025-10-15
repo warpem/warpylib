@@ -9,13 +9,10 @@ from typing import Optional, Tuple, Union
 import numpy as np
 import torch
 from torch_cubic_spline_grids import (
-    CubicCatmullRomGrid1d,
-    CubicCatmullRomGrid2d,
-    CubicCatmullRomGrid3d,
     CubicCatmullRomGrid4d
 )
 from lxml import etree
-from warpylib.interpolating_bspline import InterpolatingBSpline1d, InterpolatingBSpline2d
+from warpylib.interpolating_bspline import InterpolatingBSpline1d, InterpolatingBSpline2d, InterpolatingBSpline3d
 
 
 class Dimension(IntFlag):
@@ -208,7 +205,7 @@ class CubicGrid:
 
     def _create_torch_grid(
         self,
-    ) -> Union[CubicCatmullRomGrid1d, CubicCatmullRomGrid2d, CubicCatmullRomGrid3d, CubicCatmullRomGrid4d, InterpolatingBSpline1d, InterpolatingBSpline2d, None]:
+    ) -> Union[CubicCatmullRomGrid4d, InterpolatingBSpline1d, InterpolatingBSpline2d, InterpolatingBSpline3d, None]:
         """Create torch spline grid with proper data transformation"""
         if self.dimension_set == DimensionSets.NONE:
             return None
@@ -228,7 +225,7 @@ class CubicGrid:
             # Reshape from einspline layout to torch layout
             # Einspline: [(z*Y+y)*X+x] -> Torch: [Z, Y, X]
             data_torch = self.values.reshape((z_dim, y_dim, x_dim))
-            return CubicCatmullRomGrid3d.from_grid_data(torch.from_numpy(data_torch))
+            return InterpolatingBSpline3d.from_grid_data(torch.from_numpy(data_torch))
 
         # 2D cases
         elif self.dimension_set == DimensionSets.XY:

@@ -151,13 +151,13 @@ class TestTiltSeriesCSharpComparison:
         star_path = test_dir / "TS_1.star"
 
         # Image dimensions as defined in test (1000x1000 Angstroms)
-        image_dimensions = torch.tensor([4092.0, 5760.0]) * 0.834
+        image_dimensions = torch.tensor([5760.0, 4092.0]) * 0.834
         image_center = image_dimensions / 2
 
         # Load the TiltSeries from XML
         ts = TiltSeries(
             path=str(xml_path),
-            volume_dimensions_physical=torch.tensor([1000.0, 5700.0, 4000.0]) * 0.834,
+            volume_dimensions_physical=torch.tensor([4000.0, 5700.0, 1000.0]) * 0.834,
             image_dimensions_physical=image_dimensions
         )
 
