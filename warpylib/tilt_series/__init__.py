@@ -10,6 +10,7 @@ from . import io
 from . import positions
 from . import angles
 from . import ctf
+from . import particle_images
 
 # Bind I/O methods to TiltSeries
 TiltSeries.initialize_from_tomo_star = io.initialize_from_tomo_star
@@ -33,5 +34,9 @@ TiltSeries.get_angles_in_one_tilt = angles.get_angles_in_one_tilt
 TiltSeries.get_ctfs_for_particles_single = ctf.get_ctfs_for_particles_single
 TiltSeries.get_ctfs_for_particles = ctf.get_ctfs_for_particles
 TiltSeries.get_ctfs_for_one_tilt = ctf.get_ctfs_for_one_tilt
+
+# Bind particle image extraction methods to TiltSeries
+TiltSeries.get_images_for_particles_rft = particle_images.get_images_for_particles_rft
+TiltSeries.get_images_for_particles_single_rft = particle_images.get_images_for_particles_single_rft
 
 __all__ = ["TiltSeries"]
