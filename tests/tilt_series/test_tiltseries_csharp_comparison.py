@@ -24,7 +24,7 @@ class TestTiltSeriesCSharpComparison:
         in the volume. We load this reference data and compare our Python implementation.
         """
         # Define test data paths
-        test_dir = Path(__file__).parent.parent / "testdata"
+        test_dir = Path(__file__).parent.parent.parent / "testdata"
         xml_path = test_dir / "TS_1.xml"
         star_path = test_dir / "TS_1.star"
 
@@ -140,7 +140,7 @@ class TestTiltSeriesCSharpComparison:
         3D positions. We need to convert our absolute positions to centered coordinates for comparison.
         """
         # Define test data paths
-        test_dir = Path(__file__).parent.parent / "testdata"
+        test_dir = Path(__file__).parent.parent.parent / "testdata"
         xml_path = test_dir / "TS_1.xml"
         star_path = test_dir / "TS_1.star"
 

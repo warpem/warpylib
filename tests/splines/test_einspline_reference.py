@@ -14,7 +14,7 @@ from pathlib import Path
 from warpylib.cubic_grid import CubicGrid
 
 # Path to test data
-TESTDATA_DIR = Path(__file__).parent.parent / "testdata"
+TESTDATA_DIR = Path(__file__).parent.parent.parent / "testdata"
 
 
 def test_1d_against_einspline_reference():

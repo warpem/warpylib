@@ -194,8 +194,8 @@ def compare_xml_nodes(node1: ET.Element, node2: ET.Element, path: str = "") -> l
 def test_tiltseries_xml_roundtrip():
     """Test that TiltSeries can read and write XML without losing structure."""
     # Paths
-    original_path = Path(__file__).parent.parent / 'testdata' / 'TS_1.xml'
-    output_dir = Path(__file__).parent.parent / 'testoutputs'
+    original_path = Path(__file__).parent.parent.parent / 'testdata' / 'TS_1.xml'
+    output_dir = Path(__file__).parent.parent.parent / 'testoutputs'
     output_dir.mkdir(exist_ok=True)
     copy_path = output_dir / 'TS_1_copy.xml'
 
