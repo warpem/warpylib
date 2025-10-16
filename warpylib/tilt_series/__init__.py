@@ -9,6 +9,7 @@ from .core import TiltSeries
 from . import io
 from . import positions
 from . import angles
+from . import ctf
 
 # Bind I/O methods to TiltSeries
 TiltSeries.initialize_from_tomo_star = io.initialize_from_tomo_star
@@ -27,5 +28,10 @@ TiltSeries.get_particle_rotation_matrix_in_all_tilts = angles.get_particle_rotat
 TiltSeries.get_particle_angle_in_all_tilts_single = angles.get_particle_angle_in_all_tilts_single
 TiltSeries.get_particle_angle_in_all_tilts = angles.get_particle_angle_in_all_tilts
 TiltSeries.get_angles_in_one_tilt = angles.get_angles_in_one_tilt
+
+# Bind CTF generation methods to TiltSeries
+TiltSeries.get_ctfs_for_particles_single = ctf.get_ctfs_for_particles_single
+TiltSeries.get_ctfs_for_particles = ctf.get_ctfs_for_particles
+TiltSeries.get_ctfs_for_one_tilt = ctf.get_ctfs_for_one_tilt
 
 __all__ = ["TiltSeries"]

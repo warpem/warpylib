@@ -149,24 +149,25 @@ def get_positions_in_one_tilt(ts: "TiltSeries", coords: torch.Tensor, tilt_id: i
     return result
 
 
-def get_position_in_all_tilts_single(ts: "TiltSeries", coord: torch.Tensor) -> torch.Tensor:
+def get_position_in_all_tilts_single(ts: "TiltSeries", coords: torch.Tensor) -> torch.Tensor:
     """
-    Transform a single 3D volume coordinate to 2D image positions for all tilts.
+    Transform 3D volume coordinates to 2D image positions for all tilts.
 
-    Convenience method that replicates a single coordinate for each tilt and
+    Convenience method that replicates coordinates for each tilt and
     calls the main transformation method.
 
     Args:
         ts: TiltSeries instance
-        coord: Single coordinate in volume space (Angstroms), shape (3,)
+        coords: Coordinates in volume space (Angstroms), shape (..., 3)
+               where ... represents arbitrary batch dimensions
 
     Returns:
-        Transformed coordinates for all tilts, shape (n_tilts, 3) where:
+        Transformed coordinates for all tilts, shape (..., n_tilts, 3) where:
         - X, Y are image positions in Angstroms
         - Z is defocus in micrometers
     """
-    # Replicate coordinate for each tilt
-    per_tilt_coords = coord.unsqueeze(0).repeat(ts.n_tilts, 1)
+    # Replicate coordinates for each tilt: (..., 3) -> (..., n_tilts, 3)
+    per_tilt_coords = coords.unsqueeze(-2).expand(*coords.shape[:-1], ts.n_tilts, 3)
 
     # Transform using main method
     return get_position_in_all_tilts(ts, per_tilt_coords)
@@ -185,25 +186,25 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
 
     Args:
         ts: TiltSeries instance
-        coords: Input coordinates in volume space (Angstroms), shape (N, 3)
-               where N must be divisible by n_tilts. Coords are grouped by tilt:
-               first n_tilts entries are for each tilt at position 0,
-               next n_tilts entries are for each tilt at position 1, etc.
+        coords: Input coordinates in volume space (Angstroms), shape (..., n_tilts, 3)
+               where ... represents arbitrary batch dimensions
 
     Returns:
-        Transformed coordinates, shape (N, 3) where:
+        Transformed coordinates, shape (..., n_tilts, 3) where:
         - X, Y are image positions in Angstroms
         - Z is defocus in micrometers
     """
-    n_coords = coords.shape[0]
-    if n_coords % ts.n_tilts != 0:
-        raise ValueError(
-            f"Number of coordinates ({n_coords}) must be divisible by n_tilts ({ts.n_tilts})"
-        )
+    # Store original shape and flatten batch dimensions
+    original_shape = coords.shape
+    batch_shape = original_shape[:-2]
+
+    # Flatten to (n_particles, n_tilts, 3)
+    coords_flat = coords.reshape(-1, ts.n_tilts, 3)
+    n_particles = coords_flat.shape[0]
 
     # Volume and image centers
-    volume_center = ts.volume_dimensions_physical / 2
-    image_center = ts.image_dimensions_physical / 2
+    volume_center = ts.volume_dimensions_physical / 2  # (3,)
+    image_center = ts.image_dimensions_physical / 2  # (2,)
 
     # Grid coordinate normalization factors
     grid_step = 1.0 / (ts.n_tilts - 1) if ts.n_tilts > 1 else 0.0
@@ -213,32 +214,43 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
 
     # Prepare grid coordinates for defocus (3D grid: X, Y, tilt_index)
     # Sample at volume center (0.5, 0.5) for each tilt
-    grid_coords_defocus = torch.zeros((ts.n_tilts, 3), dtype=torch.float32)
-    grid_coords_defocus[:, 0] = 0.5  # X
-    grid_coords_defocus[:, 1] = 0.5  # Y
-    grid_coords_defocus[:, 2] = torch.arange(ts.n_tilts, dtype=torch.float32) * grid_step
+    tilt_indices = torch.arange(ts.n_tilts, dtype=torch.float32) * grid_step
+    grid_coords_defocus = torch.stack([
+        torch.full((ts.n_tilts,), 0.5),
+        torch.full((ts.n_tilts,), 0.5),
+        tilt_indices
+    ], dim=-1)  # (n_tilts, 3)
 
     # Get defocus values for each tilt
-    grid_defocus_interp = ts.grid_ctf_defocus.get_interpolated(grid_coords_defocus)
+    grid_defocus_interp = ts.grid_ctf_defocus.get_interpolated(grid_coords_defocus)  # (n_tilts,)
 
     # Prepare 4D grid coordinates for volume warping (X, Y, Z, dose)
-    temporal_grid_coords = torch.zeros((n_coords, 4), dtype=torch.float32)
+    # Shape: (n_particles, n_tilts, 4)
+    normalized_coords = coords_flat / ts.volume_dimensions_physical  # (n_particles, n_tilts, 3)
+    dose_coords = (ts.dose - min_dose) * dose_step  # (n_tilts,)
+    dose_coords = dose_coords.unsqueeze(0).expand(n_particles, -1)  # (n_particles, n_tilts)
 
-    for i in range(n_coords):
-        t = i % ts.n_tilts
-        temporal_grid_coords[i, 0] = coords[i, 0] / ts.volume_dimensions_physical[0]
-        temporal_grid_coords[i, 1] = coords[i, 1] / ts.volume_dimensions_physical[1]
-        temporal_grid_coords[i, 2] = coords[i, 2] / ts.volume_dimensions_physical[2]
-        temporal_grid_coords[i, 3] = (ts.dose[t] - min_dose) * dose_step
+    temporal_grid_coords = torch.cat([
+        normalized_coords,  # (n_particles, n_tilts, 3)
+        dose_coords.unsqueeze(-1)  # (n_particles, n_tilts, 1)
+    ], dim=-1)  # (n_particles, n_tilts, 4)
+
+    # Flatten for interpolation: (n_particles * n_tilts, 4)
+    temporal_grid_coords_flat = temporal_grid_coords.reshape(-1, 4)
 
     # Get volume warp interpolations
-    grid_volume_warp_x_interp = ts.grid_volume_warp_x.get_interpolated(temporal_grid_coords)
-    grid_volume_warp_y_interp = ts.grid_volume_warp_y.get_interpolated(temporal_grid_coords)
-    grid_volume_warp_z_interp = ts.grid_volume_warp_z.get_interpolated(temporal_grid_coords)
+    grid_volume_warp_x_interp = ts.grid_volume_warp_x.get_interpolated(temporal_grid_coords_flat)
+    grid_volume_warp_y_interp = ts.grid_volume_warp_y.get_interpolated(temporal_grid_coords_flat)
+    grid_volume_warp_z_interp = ts.grid_volume_warp_z.get_interpolated(temporal_grid_coords_flat)
+
+    # Reshape back to (n_particles, n_tilts, 3)
+    volume_warp = torch.stack([
+        grid_volume_warp_x_interp,
+        grid_volume_warp_y_interp,
+        grid_volume_warp_z_interp
+    ], dim=-1).reshape(n_particles, ts.n_tilts, 3)
 
     # Build tilt rotation matrices for each tilt
-    # C#: Matrix3.Euler(0, (Angles[t] + LevelAngleY) * Helper.ToRad, -TiltAxisAngles[t] * Helper.ToRad) *
-    #     Matrix3.RotateX(LevelAngleX * Helper.ToRad)
     deg_to_rad = torch.pi / 180.0
 
     # Stack angles into a single tensor (n_tilts, 3)
@@ -248,16 +260,36 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
         -ts.tilt_axis_angles * deg_to_rad              # psi
     ], dim=-1)
 
-    # Get Euler matrices
-    tilt_matrices = euler_to_matrix(euler_angles)  # (n_tilts, 3, 3)
+    # Get Euler matrices (n_tilts, 3, 3)
+    tilt_matrices = euler_to_matrix(euler_angles)
 
     # Apply level angle X rotation
     level_x_rad = ts.level_angle_x * deg_to_rad
-    level_x_matrix = rotate_x(torch.tensor([level_x_rad]))  # (1, 3, 3)
-    tilt_matrices = torch.matmul(tilt_matrices, level_x_matrix.squeeze(0))  # (n_tilts, 3, 3)
+    level_x_matrix = rotate_x(torch.tensor([level_x_rad])).squeeze(0)  # (3, 3)
+    tilt_matrices = torch.matmul(tilt_matrices, level_x_matrix)  # (n_tilts, 3, 3)
 
-    # Build flipped matrices if angles are inverted
-    tilt_matrices_flipped = None
+    # Center coordinates: (n_particles, n_tilts, 3)
+    centered = coords_flat - volume_center
+
+    # Apply volume warping: (n_particles, n_tilts, 3)
+    centered = centered + volume_warp
+
+    # Apply tilt rotation using batch matrix multiplication
+    # tilt_matrices: (n_tilts, 3, 3)
+    # centered: (n_particles, n_tilts, 3)
+    # We need to apply each tilt's rotation to all particles at that tilt
+    # Compute: result[p, t, :] = tilt_matrices[t, :, :] @ centered[p, t, :]
+    # In einsum: result[p, t, j] = sum_i tilt_matrices[t, j, i] * centered[p, t, i]
+    transformed = torch.einsum('tji,pti->ptj', tilt_matrices, centered)  # (n_particles, n_tilts, 3)
+
+    # Add tilt axis offsets (broadcast over particles): (n_particles, n_tilts, 2)
+    transformed[..., 0] += ts.tilt_axis_offset_x.unsqueeze(0)
+    transformed[..., 1] += ts.tilt_axis_offset_y.unsqueeze(0)
+
+    # Add image center (broadcast over particles and tilts)
+    transformed[..., :2] += image_center
+
+    # Handle inverted angles (flip Z coordinate and rotation)
     if ts.are_angles_inverted:
         euler_angles_flipped = torch.stack([
             torch.zeros(ts.n_tilts, dtype=torch.float32),  # rot = 0
@@ -266,74 +298,46 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
         ], dim=-1)
         tilt_matrices_flipped = euler_to_matrix(euler_angles_flipped)
         level_x_rad_flipped = -ts.level_angle_x * deg_to_rad
-        level_x_matrix_flipped = rotate_x(torch.tensor([level_x_rad_flipped]))
-        tilt_matrices_flipped = torch.matmul(tilt_matrices_flipped, level_x_matrix_flipped.squeeze(0))
+        level_x_matrix_flipped = rotate_x(torch.tensor([level_x_rad_flipped])).squeeze(0)
+        tilt_matrices_flipped = torch.matmul(tilt_matrices_flipped, level_x_matrix_flipped)
 
-    # Initialize result
-    result = torch.zeros_like(coords)
-
-    # Transform each coordinate
-    for i in range(n_coords):
-        t = i % ts.n_tilts
-
-        # Center coordinate
-        centered = coords[i] - volume_center
-
-        # Apply volume warping
-        sample_warping = torch.tensor([
-            grid_volume_warp_x_interp[i],
-            grid_volume_warp_y_interp[i],
-            grid_volume_warp_z_interp[i]
-        ], dtype=torch.float32)
-        centered = centered + sample_warping
-
-        # Apply tilt rotation
-        rotation = tilt_matrices[t]
-        transformed = torch.matmul(rotation, centered)
-
-        # Add tilt axis offsets (in image space)
-        transformed[0] += ts.tilt_axis_offset_x[t]
-        transformed[1] += ts.tilt_axis_offset_y[t]
-
-        # Add image center
-        transformed[0] += image_center[0]
-        transformed[1] += image_center[1]
-
-        result[i] = transformed
-
-        # Handle inverted angles (flip Z coordinate and rotation)
-        if ts.are_angles_inverted:
-            rotation_flipped = tilt_matrices_flipped[t]
-            centered_flipped = coords[i] - volume_center
-            centered_flipped = centered_flipped + sample_warping
-            centered_flipped[2] *= -1
-            transformed_flipped = torch.matmul(rotation_flipped, centered_flipped)
-            result[i, 2] = transformed_flipped[2]
+        centered_flipped = centered.clone()
+        centered_flipped[..., 2] *= -1
+        transformed_flipped = torch.einsum('tji,pti->ptj', tilt_matrices_flipped, centered_flipped)
+        transformed[..., 2] = transformed_flipped[..., 2]
 
     # Prepare grid coordinates for movement grids (3D: X, Y, tilt_index)
-    transformed_grid_coords = torch.zeros((n_coords, 3), dtype=torch.float32)
-    for i in range(n_coords):
-        t = i % ts.n_tilts
-        transformed_grid_coords[i, 0] = result[i, 0] / ts.image_dimensions_physical[0]
-        transformed_grid_coords[i, 1] = result[i, 1] / ts.image_dimensions_physical[1]
-        transformed_grid_coords[i, 2] = t * grid_step
+    # Shape: (n_particles, n_tilts, 3)
+    tilt_grid_indices = tilt_indices.unsqueeze(0).expand(n_particles, -1)  # (n_particles, n_tilts)
+    transformed_grid_coords = torch.stack([
+        transformed[..., 0] / ts.image_dimensions_physical[0],
+        transformed[..., 1] / ts.image_dimensions_physical[1],
+        tilt_grid_indices
+    ], dim=-1)  # (n_particles, n_tilts, 3)
+
+    # Flatten for interpolation
+    transformed_grid_coords_flat = transformed_grid_coords.reshape(-1, 3)
 
     # Get movement corrections
-    grid_movement_x_interp = ts.grid_movement_x.get_interpolated(transformed_grid_coords)
-    grid_movement_y_interp = ts.grid_movement_y.get_interpolated(transformed_grid_coords)
+    grid_movement_x_interp = ts.grid_movement_x.get_interpolated(transformed_grid_coords_flat)
+    grid_movement_y_interp = ts.grid_movement_y.get_interpolated(transformed_grid_coords_flat)
 
-    # Apply final corrections
-    for i in range(n_coords):
-        t = i % ts.n_tilts
+    # Reshape back: (n_particles, n_tilts)
+    movement_x = grid_movement_x_interp.reshape(n_particles, ts.n_tilts)
+    movement_y = grid_movement_y_interp.reshape(n_particles, ts.n_tilts)
 
-        # Subtract movement corrections
-        result[i, 0] -= grid_movement_x_interp[i]
-        result[i, 1] -= grid_movement_y_interp[i]
+    # Subtract movement corrections
+    transformed[..., 0] -= movement_x
+    transformed[..., 1] -= movement_y
 
-        # Convert Z to defocus (Angstroms to micrometers: 1e-4)
-        result[i, 2] = grid_defocus_interp[t] + 1e-4 * result[i, 2]
+    # Convert Z to defocus (Angstroms to micrometers: 1e-4)
+    # grid_defocus_interp: (n_tilts,), broadcast over particles
+    transformed[..., 2] = grid_defocus_interp.unsqueeze(0) + 1e-4 * transformed[..., 2]
 
-        # Apply rounding factors
-        result[i] *= ts.size_rounding_factors
+    # Apply rounding factors (broadcast over particles and tilts)
+    transformed = transformed * ts.size_rounding_factors
+
+    # Reshape back to original batch shape
+    result = transformed.reshape(*batch_shape, ts.n_tilts, 3)
 
     return result
