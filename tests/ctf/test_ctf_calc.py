@@ -225,7 +225,7 @@ def test_visualization():
     ctf.defocus_angle = 45.0
 
     # Create testoutputs directory
-    output_dir = Path(__file__).parent.parent / 'testoutputs'
+    output_dir = Path(__file__).parent.parent.parent / 'testoutputs'
     output_dir.mkdir(exist_ok=True)
 
     # 1D CTF
