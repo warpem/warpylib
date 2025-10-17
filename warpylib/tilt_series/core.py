@@ -32,7 +32,9 @@ class TiltSeries:
         Initialize TiltSeries.
 
         Args:
-            path: Path to the tilt series XML file (if loading from existing)
+            path: Path to the tilt series data file (e.g., .st, .mrc, .mdoc).
+                  The XML metadata file path is automatically derived from this
+                  by changing the extension.
             data_directory_name: Optional data directory name
             n_tilts: Number of tilts in the series (used if not loading from file)
             image_dimensions_physical: (2,) tensor with image dimensions in Angstroms
