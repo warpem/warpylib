@@ -98,7 +98,7 @@ def get_images_for_particles_rft(
         indexing='ij'
     )  # Both (size, size)
 
-    # Extract patches tilt-by-tilt to avoid memory explosion
+    # Extract patches tilt-by-tilt
     # For each tilt, extract all n_particles patches from that single tilt image
     H, W = tilt_data.shape[-2:]
     patches_list = []
