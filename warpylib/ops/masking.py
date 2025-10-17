@@ -181,3 +181,87 @@ def mask_sphere_ft(
         return torch.fft.ifftshift(masked, dim=(-2, -1))
     else:  # dimensionality == 3
         return torch.fft.ifftshift(masked, dim=(-3, -2, -1))
+
+
+def mask_sphere_rft(
+    tensor: torch.Tensor,
+    diameter: float,
+    soft_edge_width: float,
+) -> torch.Tensor:
+    """
+    Apply a circular (2D) or spherical (3D) mask in RFFT format with soft edges.
+
+    This function creates a mask suitable for RFFT (half FFT) data by calling
+    mask_sphere_ft and then taking only the positive x half. To avoid double-counting
+    the x=0 line/plane (which has Hermitian symmetry), half of the x=0 components
+    are zeroed out.
+
+    Dimensionality is inferred from the input tensor (2D or 3D).
+
+    Parameters
+    ----------
+    tensor : torch.Tensor
+        Input tensor in RFFT format with shape:
+        - 2D: (H, W//2+1)
+        - 3D: (D, H, W//2+1)
+        No batch dimensions are supported.
+    diameter : float
+        Inner diameter of the mask in pixels/voxels. Within radius = diameter/2,
+        the mask value is 1.0.
+    soft_edge_width : float
+        Width of the soft edge falloff in pixels/voxels. The mask transitions
+        from 1.0 to 0.0 using a raised cosine over this distance.
+
+    Returns
+    -------
+    torch.Tensor
+        Masked tensor in RFFT format (tensor * mask) with same shape and dtype as input.
+
+    Raises
+    ------
+    ValueError
+        If tensor is not 2D or 3D.
+
+    Examples
+    --------
+    >>> # 2D circular mask for RFFT data
+    >>> x_rfft = torch.fft.rfft2(torch.randn(128, 128))
+    >>> masked_rfft = mask_sphere_rft(x_rfft, diameter=100.0, soft_edge_width=10.0)
+    >>> masked_rfft.shape
+    torch.Size([128, 65])
+
+    >>> # 3D spherical mask for RFFT data
+    >>> x_rfft = torch.fft.rfftn(torch.randn(64, 64, 64))
+    >>> masked_rfft = mask_sphere_rft(x_rfft, diameter=50.0, soft_edge_width=5.0)
+    >>> masked_rfft.shape
+    torch.Size([64, 64, 33])
+    """
+    dimensionality = tensor.ndim
+
+    if dimensionality not in (2, 3):
+        raise ValueError(
+            f"Tensor must be 2D or 3D, got {dimensionality}D tensor"
+        )
+
+    # Reconstruct full FFT shape from RFFT shape
+    if dimensionality == 2:
+        h, w_half = tensor.shape
+        w_full = (w_half - 1) * 2
+        full_shape = (h, w_full)
+    else:  # dimensionality == 3
+        d, h, w_half = tensor.shape
+        w_full = (w_half - 1) * 2
+        full_shape = (d, h, w_full)
+
+    # Create a dummy tensor with full FFT shape to get the full mask
+    dummy_full = torch.ones(full_shape, device=tensor.device, dtype=tensor.dtype)
+    full_mask = mask_sphere_ft(dummy_full, diameter, soft_edge_width)
+
+    # Extract RFFT half (positive x half)
+    if dimensionality == 2:
+        mask_rft = full_mask[:, :w_half]
+    else:  # dimensionality == 3
+        mask_rft = full_mask[:, :, :w_half]
+
+    # Apply mask and return
+    return tensor * mask_rft.to(tensor.dtype)
