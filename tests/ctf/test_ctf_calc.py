@@ -5,6 +5,9 @@ import pytest
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+import mrcfile
 from warpylib import CTF
 
 
@@ -291,6 +294,85 @@ def test_visualization():
 
     assert output_path_combined.exists()
     print(f'Combined CTF plot saved to: {output_path_combined}')
+
+
+def test_ctf_reference_comparison():
+    """Test CTF calculation against reference results from C# code."""
+    # Path to reference data
+    testdata_dir = Path(__file__).parent.parent.parent / 'testdata'
+    reference_path = testdata_dir / 'ctf_reference.mrc'
+
+    if not reference_path.exists():
+        pytest.skip(f"Reference file not found: {reference_path}")
+
+    # Create CTF objects matching the C# reference code
+    # C1 parameters from gen_ctf.txt
+    ctf1 = CTF()
+    ctf1.pixel_size = 1.1
+    ctf1.defocus = 1.5
+    ctf1.defocus_delta = 0.3
+    ctf1.defocus_angle = 25.0
+    ctf1.phase_shift = 0.4
+    ctf1.voltage = 300.0
+    ctf1.cs = 2.7
+    ctf1.amplitude = 0.1
+    ctf1.scale = 0.9
+    ctf1.bfactor = -40.0
+
+    # C2 parameters from gen_ctf.txt
+    ctf2 = CTF()
+    ctf2.pixel_size = 1.5
+    ctf2.defocus = 2.5
+    ctf2.defocus_delta = 0.0
+    ctf2.defocus_angle = 0.0
+    ctf2.phase_shift = 0.0
+    ctf2.voltage = 200.0
+    ctf2.cs = 2.7
+    ctf2.amplitude = 0.07
+    ctf2.scale = 1.0
+    ctf2.bfactor = -40.0
+
+    # Calculate 2D CTF for both (256x256 as in reference)
+    size = 256
+    ctf1_2d = ctf1.get_2d(size=size, amp_squared=False)
+    ctf2_2d = ctf2.get_2d(size=size, amp_squared=False)
+
+    # Stack them (batch dimension)
+    ctf_stack = torch.stack([ctf1_2d, ctf2_2d], dim=0)  # Shape: (2, 256, 129)
+
+    # Save our result to testoutputs for comparison
+    testoutputs_dir = Path(__file__).parent.parent.parent / 'testoutputs'
+    testoutputs_dir.mkdir(exist_ok=True)
+    with mrcfile.new(testoutputs_dir / 'ctf_python_result.mrc', overwrite=True) as mrc:
+        mrc.set_data(ctf_stack.numpy())
+
+    # Load reference data
+    with mrcfile.open(reference_path, permissive=True) as mrc:
+        reference = torch.from_numpy(mrc.data.copy()).float()
+
+    # Reference shape should be (2, 256, 129) for rfft format
+    assert reference.shape == ctf_stack.shape, f"Shape mismatch: expected {ctf_stack.shape}, got {reference.shape}"
+
+    # Compare with reference, excluding Nyquist frequency row
+    # The Nyquist frequency (at index size//2 = 128) may have different sign convention
+    nyquist_idx = size // 2
+
+    # Create a mask excluding the Nyquist row
+    mask = torch.ones_like(ctf_stack, dtype=torch.bool)
+    mask[:, nyquist_idx, :] = False
+
+    # Compare only non-Nyquist values
+    ctf_masked = ctf_stack[mask]
+    ref_masked = reference[mask]
+
+    assert torch.allclose(ctf_masked, ref_masked, atol=2e-5, rtol=1e-4), \
+        f"CTF values don't match reference. Max diff: {torch.max(torch.abs(ctf_masked - ref_masked))}"
+
+    print(f"\nCTF reference test passed!")
+    print(f"  Shape: {ctf_stack.shape}")
+    print(f"  Compared elements (excluding Nyquist row): {ctf_masked.numel()} / {ctf_stack.numel()}")
+    print(f"  Max absolute difference: {torch.max(torch.abs(ctf_masked - ref_masked)):.2e}")
+    print(f"  Mean absolute difference: {torch.mean(torch.abs(ctf_masked - ref_masked)):.2e}")
 
 
 if __name__ == "__main__":

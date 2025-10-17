@@ -5,6 +5,8 @@ Tests for shift operations
 import torch
 import pytest
 import numpy as np
+from pathlib import Path
+import mrcfile
 
 from warpylib.ops.shift import shift
 
@@ -477,6 +479,94 @@ class TestNumericalPrecision:
 
         # Should be exactly equal due to linearity
         assert torch.allclose(y_combined, y_sequential, atol=1e-6)
+
+
+def test_shift_reference_comparison():
+    """Test shift operation against reference results from C# code."""
+    # Path to reference data
+    testdata_dir = Path(__file__).parent.parent.parent / 'testdata'
+    reference_original_path = testdata_dir / 'shift_reference.mrc'
+    reference_shifted_path = testdata_dir / 'shift_shifted_2.5_3.3.mrc'
+
+    if not reference_original_path.exists():
+        pytest.skip(f"Reference file not found: {reference_original_path}")
+    if not reference_shifted_path.exists():
+        pytest.skip(f"Reference file not found: {reference_shifted_path}")
+
+    # Create 8x8 image with first pixel set to 1, matching gen_shift.txt
+    original = torch.zeros(8, 8, dtype=torch.float32)
+    original[0, 0] = 1.0
+
+    # Apply shift matching the C# reference: (2.5, 3.3) in (X, Y)
+    # Note: our convention is [shift_x, shift_y]
+    shifts = torch.tensor([[2.5, 3.3]])
+    shifted = shift(original, shifts).squeeze(0)  # Remove batch dimension
+
+    # Save our result to testoutputs for comparison
+    testoutputs_dir = Path(__file__).parent.parent.parent / 'testoutputs'
+    testoutputs_dir.mkdir(exist_ok=True)
+    with mrcfile.new(testoutputs_dir / 'shift_python_result.mrc', overwrite=True) as mrc:
+        mrc.set_data(shifted.numpy())
+
+    # Load reference original data
+    with mrcfile.open(reference_original_path, permissive=True) as mrc:
+        reference_original = torch.from_numpy(mrc.data.copy()).float()
+        # MRC might have extra dimensions, squeeze if needed
+        if reference_original.ndim == 3:
+            reference_original = reference_original.squeeze(0)
+
+    # Load reference shifted data
+    with mrcfile.open(reference_shifted_path, permissive=True) as mrc:
+        reference_shifted = torch.from_numpy(mrc.data.copy()).float()
+        # MRC might have extra dimensions, squeeze if needed
+        if reference_shifted.ndim == 3:
+            reference_shifted = reference_shifted.squeeze(0)
+
+    # Compare original
+    assert original.shape == reference_original.shape, \
+        f"Original shape mismatch: expected {reference_original.shape}, got {original.shape}"
+    assert torch.allclose(original, reference_original, atol=1e-6), \
+        f"Original values don't match reference. Max diff: {torch.max(torch.abs(original - reference_original))}"
+
+    # Compare in Fourier space, excluding Nyquist frequency components
+    # This avoids sign convention differences at Nyquist
+    size = shifted.shape[0]
+    nyquist_y = size // 2
+    nyquist_x = size // 2  # Last index in rfft format
+
+    # Transform both to Fourier space
+    shifted_fft = torch.fft.rfft2(shifted)
+    reference_fft = torch.fft.rfft2(reference_shifted)
+
+    # Create mask excluding Nyquist row and column
+    mask = torch.ones_like(shifted_fft, dtype=torch.bool)
+    mask[nyquist_y, :] = False  # Exclude Nyquist row
+    mask[:, nyquist_x] = False  # Exclude Nyquist column
+
+    # Compare magnitudes and phases separately for better diagnostics
+    shifted_mag = torch.abs(shifted_fft[mask])
+    reference_mag = torch.abs(reference_fft[mask])
+
+    shifted_phase = torch.angle(shifted_fft[mask])
+    reference_phase = torch.angle(reference_fft[mask])
+
+    # Compare magnitudes
+    assert torch.allclose(shifted_mag, reference_mag, atol=1e-5, rtol=1e-4), \
+        f"FFT magnitude mismatch. Max diff: {torch.max(torch.abs(shifted_mag - reference_mag))}"
+
+    # Compare phases (accounting for 2π wrapping)
+    phase_diff = torch.abs(shifted_phase - reference_phase)
+    phase_diff = torch.minimum(phase_diff, 2 * np.pi - phase_diff)  # Wrap to [0, π]
+    assert torch.all(phase_diff < 1e-4), \
+        f"FFT phase mismatch. Max diff: {torch.max(phase_diff)}"
+
+    print(f"\nShift reference test passed!")
+    print(f"  Original shape: {original.shape}")
+    print(f"  Shifted shape: {shifted.shape}")
+    print(f"  Shift applied: (X={shifts[0, 0]:.1f}, Y={shifts[0, 1]:.1f})")
+    print(f"  Compared elements (excluding Nyquist row): {shifted_mag.numel()} / {shifted_fft.numel()}")
+    print(f"  Max FFT magnitude difference: {torch.max(torch.abs(shifted_mag - reference_mag)):.2e}")
+    print(f"  Max FFT phase difference: {torch.max(phase_diff):.2e}")
 
 
 if __name__ == "__main__":
