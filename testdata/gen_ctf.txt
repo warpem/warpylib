@@ -1,0 +1,38 @@
+Image CTFCoords = CTF.GetCTFCoords(256, 256, Matrix2.Identity());
+CTF C1 = new CTF()
+{
+    PixelSize = 1.1M,
+    Defocus = 1.5M,
+    DefocusDelta = 0.3M,
+    DefocusAngle = 25M,
+    PhaseShift = 0.4M,
+    Voltage = 300,
+    Cs = 2.7M,
+    Amplitude = 0.1M,
+    Scale = 0.9M,
+    Bfactor = -40M
+};
+CTF C2 = new CTF()
+{
+    PixelSize = 1.5M,
+    Defocus = 2.5M,
+    DefocusDelta = 0.0M,
+    DefocusAngle = 0.0M,
+    PhaseShift = 0.0M,
+    Voltage = 200,
+    Cs = 2.7M,
+    Amplitude = 0.07M,
+    Scale = 1M,
+    Bfactor = -40M
+};
+
+Image CTFImage = new Image(new int3(CTFCoords.Dims.X, CTFCoords.Dims.Y, 2), true);
+GPU.CreateCTF(CTFImage.GetDevice(Intent.Write),
+              CTFCoords.GetDevice(Intent.Read),
+              IntPtr.Zero,
+              (uint)CTFCoords.ElementsComplex,
+              [ C1.ToStruct(), C2.ToStruct() ],
+              false,
+              2);
+
+CTFImage.WriteMRC("ctf_reference.mrc", true);
