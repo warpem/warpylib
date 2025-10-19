@@ -265,3 +265,157 @@ def mask_sphere_rft(
 
     # Apply mask and return
     return tensor * mask_rft.to(tensor.dtype)
+
+
+def mask_rectangular(
+    tensor: torch.Tensor,
+    region: tuple,
+    soft_edge: float = 0.0,
+) -> torch.Tensor:
+    """
+    Apply a rectangular mask to a tensor with optional soft edges.
+
+    The mask is centered on the tensor. The region parameter specifies the inner
+    region where the mask value is 1.0. Outside this region, the mask falls off
+    to 0.0 using a raised cosine if soft_edge > 0, or a hard edge if soft_edge = 0.
+
+    Dimensionality is inferred from the input tensor (2D or 3D).
+
+    Parameters
+    ----------
+    tensor : torch.Tensor
+        Input tensor with shape:
+        - 2D: (H, W)
+        - 3D: (D, H, W)
+        No batch dimensions are supported.
+    region : tuple
+        Inner region size (Z, Y, X) for 3D or (Y, X) for 2D.
+        Within this region, the mask value is 1.0.
+    soft_edge : float, optional
+        Width of the soft edge falloff in pixels/voxels. The mask transitions
+        from 1.0 to 0.0 using a raised cosine over this distance.
+        If 0, creates a hard edge. Default: 0.0
+
+    Returns
+    -------
+    torch.Tensor
+        Masked tensor (tensor * mask) with same shape and dtype as input.
+
+    Raises
+    ------
+    ValueError
+        If tensor is not 2D or 3D, or if region dimensions don't match.
+
+    Examples
+    --------
+    >>> # 2D rectangular mask with hard edge
+    >>> x = torch.randn(128, 128)
+    >>> masked = mask_rectangular(x, region=(96, 96), soft_edge=0.0)
+    >>> masked.shape
+    torch.Size([128, 128])
+
+    >>> # 3D rectangular mask with soft edge
+    >>> x = torch.randn(64, 64, 64)
+    >>> masked = mask_rectangular(x, region=(48, 48, 48), soft_edge=8.0)
+    >>> masked.shape
+    torch.Size([64, 64, 64])
+
+    >>> # 2D mask used for apodizing image edges
+    >>> x = torch.randn(256, 256)
+    >>> masked = mask_rectangular(x, region=(224, 224), soft_edge=16.0)
+    """
+    dimensionality = tensor.ndim
+
+    if dimensionality not in (2, 3):
+        raise ValueError(
+            f"Tensor must be 2D or 3D, got {dimensionality}D tensor"
+        )
+
+    if len(region) != dimensionality:
+        raise ValueError(
+            f"Region dimensions ({len(region)}) must match tensor dimensionality ({dimensionality})"
+        )
+
+    device = tensor.device
+    dtype = tensor.dtype
+    dims = tensor.shape
+
+    # Convert region to tensor for easier math
+    region_tensor = torch.tensor(region, device=device, dtype=torch.float32)
+    dims_tensor = torch.tensor(dims, device=device, dtype=torch.float32)
+
+    if soft_edge <= 0:
+        # Hard edge mask
+        # Calculate margins: (dims - region) / 2
+        margin = ((dims_tensor - region_tensor) / 2).to(torch.int64)
+        region_int = region_tensor.to(torch.int64)
+
+        # Create mask initialized to zeros
+        mask = torch.zeros_like(tensor, dtype=torch.float32)
+
+        # Set inner region to 1
+        if dimensionality == 2:
+            mask[
+                margin[0]:margin[0] + region_int[0],
+                margin[1]:margin[1] + region_int[1]
+            ] = 1.0
+        else:  # dimensionality == 3
+            mask[
+                margin[0]:margin[0] + region_int[0],
+                margin[1]:margin[1] + region_int[1],
+                margin[2]:margin[2] + region_int[2]
+            ] = 1.0
+
+    else:
+        # Soft edge mask with raised cosine falloff
+        # Calculate margins: (dims - region) / 2
+        margin = (dims_tensor - region_tensor) / 2
+
+        if dimensionality == 2:
+            h, w = dims
+            y = torch.arange(h, device=device, dtype=torch.float32)
+            x = torch.arange(w, device=device, dtype=torch.float32)
+
+            # Distance from edge for each dimension
+            # max(margin - pos, pos - (margin + region - 1))
+            # This is 0 inside the region, positive outside
+            yy_dist = torch.maximum(margin[0] - y, y - (margin[0] + region_tensor[0] - 1))
+            xx_dist = torch.maximum(margin[1] - x, x - (margin[1] + region_tensor[1] - 1))
+
+            # Normalize by soft_edge and clamp to [0, 1]
+            yy_norm = torch.clamp(yy_dist / soft_edge, 0.0, 1.0)
+            xx_norm = torch.clamp(xx_dist / soft_edge, 0.0, 1.0)
+
+            # Create 2D grids
+            yy_grid, xx_grid = torch.meshgrid(yy_norm, xx_norm, indexing='ij')
+
+            # Combined distance: sqrt(xx^2 + yy^2), clamped to [0, 1]
+            r = torch.clamp(torch.sqrt(xx_grid**2 + yy_grid**2), 0.0, 1.0)
+
+        else:  # dimensionality == 3
+            d, h, w = dims
+            z = torch.arange(d, device=device, dtype=torch.float32)
+            y = torch.arange(h, device=device, dtype=torch.float32)
+            x = torch.arange(w, device=device, dtype=torch.float32)
+
+            # Distance from edge for each dimension
+            zz_dist = torch.maximum(margin[0] - z, z - (margin[0] + region_tensor[0] - 1))
+            yy_dist = torch.maximum(margin[1] - y, y - (margin[1] + region_tensor[1] - 1))
+            xx_dist = torch.maximum(margin[2] - x, x - (margin[2] + region_tensor[2] - 1))
+
+            # Normalize by soft_edge and clamp to [0, 1]
+            zz_norm = torch.clamp(zz_dist / soft_edge, 0.0, 1.0)
+            yy_norm = torch.clamp(yy_dist / soft_edge, 0.0, 1.0)
+            xx_norm = torch.clamp(xx_dist / soft_edge, 0.0, 1.0)
+
+            # Create 3D grids
+            zz_grid, yy_grid, xx_grid = torch.meshgrid(zz_norm, yy_norm, xx_norm, indexing='ij')
+
+            # Combined distance: sqrt(xx^2 + yy^2 + zz^2), clamped to [0, 1]
+            r = torch.clamp(torch.sqrt(xx_grid**2 + yy_grid**2 + zz_grid**2), 0.0, 1.0)
+
+        # Raised cosine: 0.5 * (1 + cos(r * pi))
+        mask = 0.5 * (1.0 + torch.cos(r * math.pi))
+
+    # Apply mask and convert back to original dtype
+    return tensor * mask.to(dtype)
