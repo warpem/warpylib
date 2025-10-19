@@ -127,10 +127,14 @@ def matrix_to_euler(matrices: torch.Tensor) -> torch.Tensor:
         sin_gamma = torch.sin(gamma_n)
         cos_gamma = torch.cos(gamma_n)
 
-        # Handle small sin(gamma)
+        # Handle small sin(gamma) OR small m23
+        # When m23 is very small (including exactly 0), we must use the m13 formula
+        # to avoid sign_sb = 0 which would incorrectly give beta = 0
         small_sin_mask = torch.abs(sin_gamma) < 1.192092896e-07
+        small_m23_mask = torch.abs(m23_n) < 1.192092896e-07
+
         sign_sb = torch.where(
-            small_sin_mask,
+            small_sin_mask | small_m23_mask,
             torch.sign(-m13_n / cos_gamma),
             torch.where(sin_gamma > 0, torch.sign(m23_n), -torch.sign(m23_n))
         )
