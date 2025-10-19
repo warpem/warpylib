@@ -23,8 +23,8 @@ def test_load_images_ts1():
     print(f"  Processing directory: {ts.processing_directory_name}")
 
     # Define pixel sizes (typical values - adjust as needed)
-    original_pixel_size = 1.0  # Angstroms
-    desired_pixel_size = 4.0   # Angstroms (4x downsampling)
+    original_pixel_size = 0.834  # Angstroms
+    desired_pixel_size = 10.0   # Angstroms
 
     # Load images without half-averages first
     print(f"\nLoading images (original: {original_pixel_size}Å, desired: {desired_pixel_size}Å)...")
