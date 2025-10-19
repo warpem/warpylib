@@ -13,6 +13,8 @@ from . import ctf
 from . import particle_images
 from . import paths
 from . import load_images
+from . import reconstruct_subvolumes
+from . import reconstruct_volume
 
 # Bind I/O methods to TiltSeries
 TiltSeries.initialize_from_tomo_star = io.initialize_from_tomo_star
@@ -43,6 +45,13 @@ TiltSeries.get_images_for_particles_single_rft = particle_images.get_images_for_
 
 # Bind image loading methods to TiltSeries
 TiltSeries.load_images = load_images.load_images
+
+# Bind subtomogram reconstruction methods to TiltSeries
+TiltSeries.reconstruct_subvolumes = reconstruct_subvolumes.reconstruct_subvolumes
+TiltSeries.reconstruct_subvolumes_single = reconstruct_subvolumes.reconstruct_subvolumes_single
+
+# Bind full volume reconstruction methods to TiltSeries
+TiltSeries.reconstruct_full = reconstruct_volume.reconstruct_full
 
 # Bind path properties to TiltSeries
 TiltSeries.name = paths.name
