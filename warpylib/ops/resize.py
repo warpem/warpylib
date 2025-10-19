@@ -139,6 +139,17 @@ def resize(
         if padding_mode == 'constant':
             result = F.pad(result, pad_amounts, mode='constant', value=padding_value)
         else:
-            result = F.pad(result, pad_amounts, mode=padding_mode)
+            # Non-constant padding requires input to have enough dimensions
+            # For 2D: need at least 3D (batch, H, W)
+            # For 3D: need at least 4D (batch, D, H, W)
+            required_ndim = ndim_spatial + 1
+
+            if result.ndim < required_ndim:
+                # Add batch dimension temporarily
+                result = result.unsqueeze(0)
+                result = F.pad(result, pad_amounts, mode=padding_mode)
+                result = result.squeeze(0)
+            else:
+                result = F.pad(result, pad_amounts, mode=padding_mode)
 
     return result
