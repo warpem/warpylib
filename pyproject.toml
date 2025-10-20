@@ -28,6 +28,8 @@ dependencies = [
     "numpy>=1.20.0",
     "lxml>=4.9.0",  # Efficient XML processing
     "starfile>=0.5.0",  # STAR file I/O for cryo-EM data
+    "mrcfile",
+    "torch-projectors",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +38,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
+    "matplotlib",
 ]
 
 [project.urls]
