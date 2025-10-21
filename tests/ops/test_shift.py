@@ -8,8 +8,6 @@ import numpy as np
 from pathlib import Path
 import mrcfile
 
-from torch_fourier_shift import fourier_shift_image_1d
-
 from warpylib.ops.shift import shift
 
 
@@ -342,7 +340,7 @@ class TestGradients:
         x = torch.randn(32, requires_grad=True)
         shifts = torch.tensor([[2.5]])
 
-        y = fourier_shift_image_1d(x, shifts)
+        y = shift(x, shifts)
         loss = (y**2).sum()
         loss.backward()
 
