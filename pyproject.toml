@@ -30,6 +30,7 @@ dependencies = [
     "starfile>=0.5.0",  # STAR file I/O for cryo-EM data
     "mrcfile",
     "torch-projectors",
+    "torch-subpixel-crop>=0.1.1"
 ]
 
 [project.optional-dependencies]
