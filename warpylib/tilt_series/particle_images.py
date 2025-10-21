@@ -83,7 +83,7 @@ def get_images_for_particles_rft(
         sidelength=size,
         mask=mask,
         return_rfft=True,
-        fftshifted=True,
+        decenter=True,
     )
 
     return result
