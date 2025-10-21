@@ -76,6 +76,7 @@ def get_images_for_particles_rft(
 
     # Convert XY to pixel coordinates
     positions_pixels = positions_angstrom[..., :2] / pixel_size  # (..., n_tilts, 2)
+    positions_pixels = torch.cat(positions_pixels.split(1, dim=-1)[::-1], dim=-1)  # YX order
 
     result = subpixel_crop_2d(
         image=tilt_data,
