@@ -49,6 +49,7 @@ TiltSeries.load_images = load_images.load_images
 # Bind subtomogram reconstruction methods to TiltSeries
 TiltSeries.reconstruct_subvolumes = reconstruct_subvolumes.reconstruct_subvolumes
 TiltSeries.reconstruct_subvolumes_single = reconstruct_subvolumes.reconstruct_subvolumes_single
+TiltSeries.get_sinc2_correction = reconstruct_subvolumes.get_sinc2_correction
 
 # Bind full volume reconstruction methods to TiltSeries
 TiltSeries.reconstruct_full = reconstruct_volume.reconstruct_full

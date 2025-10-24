@@ -5,9 +5,11 @@ Tests for TiltSeries.reconstruct_subvolumes method
 import pytest
 import torch
 import mrcfile
+import matplotlib.pyplot as plt
 from pathlib import Path
 
 from warpylib.tilt_series import TiltSeries
+from warpylib.tilt_series.reconstruct_subvolumes import get_sinc2_correction
 
 
 class TestReconstructSubvolumes:
@@ -350,6 +352,71 @@ class TestReconstructSubvolumes:
         print(f"  grid_angle_x grad norm: {ts.grid_angle_x.values.grad.norm():.6f}")
         print(f"  grid_angle_y grad norm: {ts.grid_angle_y.values.grad.norm():.6f}")
         print(f"  grid_angle_z grad norm: {ts.grid_angle_z.values.grad.norm():.6f}")
+
+    def test_sinc2_correction(self):
+        """Test sinc^2 correction volume generation and visualization"""
+        # Setup test outputs directory
+        testoutputs_dir = Path(__file__).parent.parent.parent / 'testoutputs'
+        testoutputs_dir.mkdir(exist_ok=True)
+
+        # Test different sizes and oversampling factors
+        test_cases = [
+            (64, 1.0, 'sinc2_correction_size64_os1.0'),
+            (64, 2.0, 'sinc2_correction_size64_os2.0'),
+            (128, 1.0, 'sinc2_correction_size128_os1.0'),
+            (128, 2.0, 'sinc2_correction_size128_os2.0'),
+        ]
+
+        for size, oversampling, name in test_cases:
+            print(f"\nGenerating sinc^2 correction: size={size}, oversampling={oversampling}")
+
+            # Generate correction volume
+            correction = get_sinc2_correction(size=size, oversampling=oversampling)
+
+            # Check shape and values
+            assert correction.shape == (size, size, size)
+            assert torch.all(torch.isfinite(correction))
+            assert torch.all(correction > 0)  # sinc^2 should be positive
+            assert torch.all(correction <= 1.0)  # sinc^2(0) = 1 is the maximum
+
+            # Check that center value is 1.0 (DC component)
+            center_idx = size // 2
+            assert torch.isclose(correction[center_idx, center_idx, center_idx],
+                               torch.tensor(1.0), atol=1e-5)
+
+            # Write to MRC
+            output_path = testoutputs_dir / f'{name}.mrc'
+            print(f"  Writing to: {output_path}")
+            with mrcfile.new(str(output_path), overwrite=True) as mrc:
+                mrc.set_data(correction.numpy().astype('float32'))
+                mrc.voxel_size = (1.0, 1.0, 1.0)
+
+            # Extract central X line (through center of volume)
+            central_line = correction[center_idx, center_idx, :]
+
+            # Create 1D plot
+            fig, ax = plt.subplots(figsize=(10, 6))
+            x_coords = torch.arange(size) - center_idx  # Center at 0
+            ax.plot(x_coords.numpy(), central_line.numpy(), 'b-', linewidth=2)
+            ax.axhline(y=1.0, color='r', linestyle='--', alpha=0.5, label='DC (no attenuation)')
+            ax.axvline(x=0, color='k', linestyle='--', alpha=0.3)
+            ax.grid(True, alpha=0.3)
+            ax.set_xlabel('Distance from center (pixels)')
+            ax.set_ylabel('sinc^2 correction factor')
+            ax.set_title(f'sinc^2 Correction (size={size}, oversampling={oversampling})\nCentral X line')
+            ax.legend()
+
+            # Save plot
+            plot_path = testoutputs_dir / f'{name}_central_line.png'
+            print(f"  Saving plot to: {plot_path}")
+            fig.savefig(plot_path, dpi=150, bbox_inches='tight')
+            plt.close(fig)
+
+            # Print some statistics
+            print(f"  Center value: {correction[center_idx, center_idx, center_idx]:.6f}")
+            print(f"  Min value: {correction.min():.6f}")
+            print(f"  Max value: {correction.max():.6f}")
+            print(f"  Edge value: {correction[0, center_idx, center_idx]:.6f}")
 
     def test_write_reconstructions_to_mrc(self):
         """Write out reconstructions to MRC files for visual inspection using real data"""

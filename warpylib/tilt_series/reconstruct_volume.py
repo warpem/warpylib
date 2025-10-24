@@ -10,6 +10,7 @@ import math
 from typing import Optional
 from ..ops import norm, mask_rectangular, subtract_plane, resize
 from ..ops.bandpass import bandpass
+from .reconstruct_subvolumes import get_sinc2_correction
 
 
 def reconstruct_full(
@@ -23,6 +24,7 @@ def reconstruct_full(
     invert: bool = False,
     apply_ctf: bool = True,
     ctf_weighted: bool = True,
+    correct_attenuation: bool = True,
     batch_size: int = 8,
 ) -> torch.Tensor:
     """
@@ -49,6 +51,7 @@ def reconstruct_full(
         invert: Whether to invert contrast
         apply_ctf: Whether to apply CTF correction
         ctf_weighted: Whether to apply dose/location weighting to CTFs
+        correct_attenuation: Whether to apply sinc^2 correction for interpolation attenuation (default: True)
         batch_size: Number of tiles to process simultaneously
 
     Returns:
@@ -89,6 +92,17 @@ def reconstruct_full(
     # Calculate padded extraction size (even)
     size_padded = int(subvolume_size * subvolume_padding)
     size_padded = (size_padded // 2) * 2  # Ensure even
+
+    # Calculate sinc^2 correction pattern for interpolation attenuation (if enabled)
+    if correct_attenuation:
+        # Generate correction for padded size with oversampling=1.0 (matching reconstruction)
+        sinc2_correction_padded = get_sinc2_correction(size=size_padded, oversampling=1.0)
+
+        # Crop to central subvolume_size (same as reconstruction cropping)
+        sinc2_correction = resize(sinc2_correction_padded, size=(subvolume_size, subvolume_size, subvolume_size))
+
+        # Take reciprocal to get correction factor: 1 / max(sinc^2, 1e-6)
+        correction_factor = 1.0 / torch.clamp(sinc2_correction, min=1e-6)
 
     # Generate grid of tile positions
     # Grid covers volume in steps of subvolume_size, centered on tile positions
@@ -145,6 +159,10 @@ def reconstruct_full(
             crop_start:crop_end,
             crop_start:crop_end
         ]  # (batch, subvolume_size, subvolume_size, subvolume_size)
+
+        # Apply sinc^2 correction to cropped tiles (if enabled)
+        if correct_attenuation:
+            cropped_batch = cropped_batch * correction_factor
 
         # Place each tile into output volume
         for i in range(batch_end - batch_start):
