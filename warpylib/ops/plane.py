@@ -37,16 +37,17 @@ def fit_plane(tensor: torch.Tensor) -> torch.Tensor:
 
     h, w = tensor.shape
     device = tensor.device
+    type = tensor.dtype
 
     # Create coordinate grids
-    y = torch.arange(h, device=device, dtype=torch.float64)
-    x = torch.arange(w, device=device, dtype=torch.float64)
+    y = torch.arange(h, device=device, dtype=type)
+    x = torch.arange(w, device=device, dtype=type)
     yy, xx = torch.meshgrid(y, x, indexing='ij')
 
     # Flatten everything
     x_flat = xx.reshape(-1)
     y_flat = yy.reshape(-1)
-    z_flat = tensor.reshape(-1).to(torch.float64)
+    z_flat = tensor.reshape(-1)
 
     # Compute sums needed for least squares solution
     # Using double precision to match C# code
@@ -55,7 +56,7 @@ def fit_plane(tensor: torch.Tensor) -> torch.Tensor:
     F = x_flat.sum()
     G = (y_flat * y_flat).sum()
     H = y_flat.sum()
-    I = torch.tensor(h * w, device=device, dtype=torch.float64)
+    I = torch.tensor(h * w, device=device, dtype=type)
     J = (x_flat * z_flat).sum()
     K = (y_flat * z_flat).sum()
     L = z_flat.sum()
@@ -71,7 +72,7 @@ def fit_plane(tensor: torch.Tensor) -> torch.Tensor:
     # Z axis intercept
     plane_c = (F * G * J - E * H * J - E * F * K + D * H * K + E * E * L - D * G * L) / denom
 
-    return torch.tensor([plane_a, plane_b, plane_c], device=device, dtype=tensor.dtype)
+    return torch.tensor([plane_a, plane_b, plane_c], device=device, dtype=type)
 
 
 def subtract_plane(tensor: torch.Tensor, fit_and_subtract: bool = True) -> torch.Tensor:

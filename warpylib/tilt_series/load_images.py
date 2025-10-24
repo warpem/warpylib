@@ -105,10 +105,14 @@ def load_images(
     else:
         original_height, original_width = original_shape[0], original_shape[1]
 
+    # Get device from TiltSeries tensors
+    device = tilt_series.angles.device
+
     # Update physical dimensions
     tilt_series.image_dimensions_physical = torch.tensor(
         [original_width * original_pixel_size, original_height * original_pixel_size],
         dtype=torch.float32,
+        device=device,
     )
 
     # Calculate downsampling factor
@@ -129,6 +133,7 @@ def load_images(
             1.0,  # Z dimension (not used for 2D images)
         ],
         dtype=torch.float32,
+        device=device,
     )
 
     # Determine if rescaling is needed

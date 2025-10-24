@@ -47,6 +47,12 @@ def get_angle_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.Tens
     Returns:
         Euler angles in radians (ZYZ convention), shape (..., n_tilts, 3)
     """
+    # Get device from TiltSeries
+    device = ts.angles.device
+
+    # Ensure coords are on the same device as TiltSeries
+    coords = coords.to(device)
+
     # Store original shape and flatten batch dimensions
     original_shape = coords.shape
     batch_shape = original_shape[:-2]
@@ -64,7 +70,7 @@ def get_angle_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.Tens
     normalized_xy = coords_flat[..., :2] / ts.volume_dimensions_physical[:2]
 
     # Tilt indices: (n_tilts,)
-    tilt_indices = torch.arange(ts.n_tilts, dtype=torch.float32) * grid_step
+    tilt_indices = torch.arange(ts.n_tilts, dtype=torch.float32, device=device) * grid_step
 
     # Expand to (n_particles, n_tilts)
     tilt_grid_indices = tilt_indices.unsqueeze(0).expand(n_particles, -1)
@@ -94,7 +100,7 @@ def get_angle_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.Tens
     # Build tilt rotation matrices for each tilt
     # Stack angles into a single tensor (n_tilts, 3)
     euler_angles = torch.stack([
-        torch.zeros(ts.n_tilts, dtype=torch.float32),  # rot = 0
+        torch.zeros(ts.n_tilts, dtype=torch.float32, device=device),  # rot = 0
         (ts.angles + ts.level_angle_y) * deg_to_rad,   # tilt
         -ts.tilt_axis_angles * deg_to_rad              # psi
     ], dim=-1)
@@ -104,7 +110,7 @@ def get_angle_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.Tens
 
     # Apply level angle X rotation
     level_x_rad = ts.level_angle_x * deg_to_rad
-    level_x_matrix = rotate_x(torch.tensor([level_x_rad])).squeeze(0)  # (3, 3)
+    level_x_matrix = rotate_x(torch.tensor([level_x_rad], device=device)).squeeze(0)  # (3, 3)
     tilt_matrices = torch.matmul(tilt_matrices, level_x_matrix)  # (n_tilts, 3, 3)
 
     # Build correction matrices from angle grids (XYZ extrinsic)

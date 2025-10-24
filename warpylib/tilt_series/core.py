@@ -232,3 +232,53 @@ class TiltSeries:
     def indices_sorted_dose(self) -> torch.Tensor:
         """Get indices sorted by dose"""
         return torch.argsort(self.dose)
+
+    def to(self, device: torch.device) -> "TiltSeries":
+        """
+        Move all tensors in TiltSeries to the specified device.
+
+        Args:
+            device: Target device (e.g., 'cpu', 'cuda', 'mps')
+
+        Returns:
+            Self for method chaining
+        """
+        # Move basic tensor attributes
+        self.image_dimensions_physical = self.image_dimensions_physical.to(device)
+        self.volume_dimensions_physical = self.volume_dimensions_physical.to(device)
+        self.size_rounding_factors = self.size_rounding_factors.to(device)
+        self.plane_normal = self.plane_normal.to(device)
+        self.magnification_correction = self.magnification_correction.to(device)
+
+        # Move per-tilt parameters
+        self.angles = self.angles.to(device)
+        self.dose = self.dose.to(device)
+        self.use_tilt = self.use_tilt.to(device)
+        self.tilt_axis_angles = self.tilt_axis_angles.to(device)
+        self.tilt_axis_offset_x = self.tilt_axis_offset_x.to(device)
+        self.tilt_axis_offset_y = self.tilt_axis_offset_y.to(device)
+        self.fov_fraction = self.fov_fraction.to(device)
+
+        # Move all grids to device
+        self.grid_ctf_defocus = self.grid_ctf_defocus.to(device)
+        self.grid_ctf_defocus_delta = self.grid_ctf_defocus_delta.to(device)
+        self.grid_ctf_defocus_angle = self.grid_ctf_defocus_angle.to(device)
+        self.grid_ctf_cs = self.grid_ctf_cs.to(device)
+        self.grid_ctf_phase = self.grid_ctf_phase.to(device)
+        self.grid_ctf_doming = self.grid_ctf_doming.to(device)
+        self.grid_movement_x = self.grid_movement_x.to(device)
+        self.grid_movement_y = self.grid_movement_y.to(device)
+        self.grid_angle_x = self.grid_angle_x.to(device)
+        self.grid_angle_y = self.grid_angle_y.to(device)
+        self.grid_angle_z = self.grid_angle_z.to(device)
+        self.grid_dose_bfacs = self.grid_dose_bfacs.to(device)
+        self.grid_dose_bfacs_delta = self.grid_dose_bfacs_delta.to(device)
+        self.grid_dose_bfacs_angle = self.grid_dose_bfacs_angle.to(device)
+        self.grid_dose_weights = self.grid_dose_weights.to(device)
+        self.grid_location_bfacs = self.grid_location_bfacs.to(device)
+        self.grid_location_weights = self.grid_location_weights.to(device)
+        self.grid_volume_warp_x = self.grid_volume_warp_x.to(device)
+        self.grid_volume_warp_y = self.grid_volume_warp_y.to(device)
+        self.grid_volume_warp_z = self.grid_volume_warp_z.to(device)
+
+        return self

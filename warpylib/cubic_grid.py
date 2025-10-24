@@ -406,11 +406,11 @@ class CubicGrid:
         """
         # Handle single coordinate
         if isinstance(coords, (tuple, list)):
-            coords = torch.tensor([coords], dtype=torch.float32)
+            coords = torch.tensor([coords], dtype=torch.float32, device=self.values.device)
         elif not isinstance(coords, torch.Tensor):
-            coords = torch.tensor(coords, dtype=torch.float32)
+            coords = torch.tensor(coords, dtype=torch.float32, device=self.values.device)
         else:
-            coords = coords.to(dtype=torch.float32)
+            coords = coords.to(dtype=torch.float32, device=self.values.device)
 
         # Ensure 2D tensor
         if coords.ndim == 1:
@@ -418,7 +418,7 @@ class CubicGrid:
 
         # Handle degenerate case
         if self._grid_operator is None or self.dimension_set == DimensionSets.NONE:
-            return torch.full((len(coords),), self.values[0].item(), dtype=torch.float32)
+            return torch.full((len(coords),), self.values[0].item(), dtype=torch.float32, device=self.values.device)
 
         # Transform coordinates
         torch_coords = self._transform_coords_to_torch(coords)
@@ -585,6 +585,19 @@ class CubicGrid:
                 result[z * y_dim + y] = self.values[idx]
 
         return result
+
+    def to(self, device: torch.device) -> "CubicGrid":
+        """
+        Move grid values to the specified device.
+
+        Args:
+            device: Target device (e.g., 'cpu', 'cuda', 'mps')
+
+        Returns:
+            New CubicGrid with values on the specified device
+        """
+        new_values = self.values.to(device)
+        return CubicGrid(self.dimensions, new_values, self.margins)
 
     def save_to_xml(self, parent_element: etree._Element) -> None:
         """

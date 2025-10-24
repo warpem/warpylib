@@ -194,6 +194,12 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
         - X, Y are image positions in Angstroms
         - Z is defocus in micrometers
     """
+    # Get device from TiltSeries tensors
+    device = ts.angles.device
+
+    # Ensure coords are on the same device as TiltSeries
+    coords = coords.to(device)
+
     # Store original shape and flatten batch dimensions
     original_shape = coords.shape
     batch_shape = original_shape[:-2]
@@ -214,10 +220,10 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
 
     # Prepare grid coordinates for defocus (3D grid: X, Y, tilt_index)
     # Sample at volume center (0.5, 0.5) for each tilt
-    tilt_indices = torch.arange(ts.n_tilts, dtype=torch.float32) * grid_step
+    tilt_indices = torch.arange(ts.n_tilts, dtype=torch.float32, device=device) * grid_step
     grid_coords_defocus = torch.stack([
-        torch.full((ts.n_tilts,), 0.5),
-        torch.full((ts.n_tilts,), 0.5),
+        torch.full((ts.n_tilts,), 0.5, device=device),
+        torch.full((ts.n_tilts,), 0.5, device=device),
         tilt_indices
     ], dim=-1)  # (n_tilts, 3)
 
@@ -255,7 +261,7 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
 
     # Stack angles into a single tensor (n_tilts, 3)
     euler_angles = torch.stack([
-        torch.zeros(ts.n_tilts, dtype=torch.float32),  # rot = 0
+        torch.zeros(ts.n_tilts, dtype=torch.float32, device=device),  # rot = 0
         (ts.angles + ts.level_angle_y) * deg_to_rad,   # tilt
         -ts.tilt_axis_angles * deg_to_rad              # psi
     ], dim=-1)
@@ -265,7 +271,7 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
 
     # Apply level angle X rotation
     level_x_rad = ts.level_angle_x * deg_to_rad
-    level_x_matrix = rotate_x(torch.tensor([level_x_rad])).squeeze(0)  # (3, 3)
+    level_x_matrix = rotate_x(torch.tensor([level_x_rad], device=device)).squeeze(0)  # (3, 3)
     tilt_matrices = torch.matmul(tilt_matrices, level_x_matrix)  # (n_tilts, 3, 3)
 
     # Center coordinates: (n_particles, n_tilts, 3)
@@ -292,13 +298,13 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
     # Handle inverted angles (flip Z coordinate and rotation)
     if ts.are_angles_inverted:
         euler_angles_flipped = torch.stack([
-            torch.zeros(ts.n_tilts, dtype=torch.float32),  # rot = 0
+            torch.zeros(ts.n_tilts, dtype=torch.float32, device=device),  # rot = 0
             -(ts.angles + ts.level_angle_y) * deg_to_rad,  # tilt (flipped)
             -ts.tilt_axis_angles * deg_to_rad              # psi
         ], dim=-1)
         tilt_matrices_flipped = euler_to_matrix(euler_angles_flipped)
         level_x_rad_flipped = -ts.level_angle_x * deg_to_rad
-        level_x_matrix_flipped = rotate_x(torch.tensor([level_x_rad_flipped])).squeeze(0)
+        level_x_matrix_flipped = rotate_x(torch.tensor([level_x_rad_flipped], device=device)).squeeze(0)
         tilt_matrices_flipped = torch.matmul(tilt_matrices_flipped, level_x_matrix_flipped)
 
         centered_flipped = centered.clone()

@@ -71,7 +71,7 @@ def reconstruct_full(
         torch.Size([104, 594, 417])
     """
     # Store volume dimensions on TiltSeries for use by other methods
-    ts.volume_dimensions_physical = torch.tensor(volume_dimensions_physical, dtype=torch.float32)
+    ts.volume_dimensions_physical = torch.tensor(volume_dimensions_physical, dtype=torch.float32, device=tilt_data.device)
 
     # Calculate volume dimensions in pixels (rounded to even)
     dims_physical = torch.tensor(volume_dimensions_physical, dtype=torch.float32)
@@ -102,7 +102,8 @@ def reconstruct_full(
         sinc2_correction = resize(sinc2_correction_padded, size=(subvolume_size, subvolume_size, subvolume_size))
 
         # Take reciprocal to get correction factor: 1 / max(sinc^2, 1e-6)
-        correction_factor = 1.0 / torch.clamp(sinc2_correction, min=1e-6)
+        # Move to same device as tilt_data
+        correction_factor = (1.0 / torch.clamp(sinc2_correction, min=1e-6)).to(tilt_data.device)
 
     # Generate grid of tile positions
     # Grid covers volume in steps of subvolume_size, centered on tile positions

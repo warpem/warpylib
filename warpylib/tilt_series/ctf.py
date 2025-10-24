@@ -70,6 +70,12 @@ def get_ctfs_for_particles(
     Returns:
         CTF object with batched parameters, shape (..., n_tilts)
     """
+    # Get device from TiltSeries
+    device = ts.angles.device
+
+    # Ensure coords are on the same device as TiltSeries
+    coords = coords.to(device)
+
     # Store original batch shape
     batch_shape = coords.shape[:-2]
 
@@ -92,9 +98,9 @@ def get_ctfs_for_particles(
     defocus = image_positions_flat[..., 2]
 
     # Get tilt-specific CTF parameters
-    defocus_delta = torch.zeros(ts.n_tilts, dtype=torch.float32)
-    defocus_angle = torch.zeros(ts.n_tilts, dtype=torch.float32)
-    phase_shift = torch.zeros(ts.n_tilts, dtype=torch.float32)
+    defocus_delta = torch.zeros(ts.n_tilts, dtype=torch.float32, device=device)
+    defocus_angle = torch.zeros(ts.n_tilts, dtype=torch.float32, device=device)
+    phase_shift = torch.zeros(ts.n_tilts, dtype=torch.float32, device=device)
 
     for t in range(ts.n_tilts):
         defocus_delta[t] = ts.get_tilt_defocus_delta(t)
@@ -115,13 +121,13 @@ def get_ctfs_for_particles(
 
     if weighted:
         # Grid coordinates for interpolation
-        tilt_indices = torch.arange(ts.n_tilts, dtype=torch.float32) * grid_step
+        tilt_indices = torch.arange(ts.n_tilts, dtype=torch.float32, device=device) * grid_step
 
         # Prepare coordinates for dose grids (at volume center)
         # Shape: (n_tilts, 3)
         dose_coords = torch.stack([
-            torch.full((ts.n_tilts,), 0.5),
-            torch.full((ts.n_tilts,), 0.5),
+            torch.full((ts.n_tilts,), 0.5, device=device),
+            torch.full((ts.n_tilts,), 0.5, device=device),
             tilt_indices
         ], dim=-1)
 
