@@ -15,11 +15,13 @@ from . import paths
 from . import load_images
 from . import reconstruct_subvolumes
 from . import reconstruct_volume
+from . import import_alignments
 
 # Bind I/O methods to TiltSeries
 TiltSeries.initialize_from_tomo_star = io.initialize_from_tomo_star
 TiltSeries.load_meta = io.load_meta
 TiltSeries.save_meta = io.save_meta
+TiltSeries.import_alignments = import_alignments.import_alignments
 
 # Bind position transformation methods to TiltSeries
 TiltSeries.get_positions_in_one_tilt = positions.get_positions_in_one_tilt
