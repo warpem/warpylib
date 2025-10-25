@@ -207,7 +207,7 @@ def reconstruct_subvolumes(
 
     # Convert reconstruction to real space
     # irfftn with norm='forward' to match the example
-    real_reconstruction = torch.fft.irfftn(data_rec, dim=(-3, -2, -1), norm='forward')
+    real_reconstruction = torch.fft.irfftn(data_rec, dim=(-3, -2, -1), norm='backward')
 
     # ifftshift and crop to original size
     result = ifftshift_and_crop_3d(real_reconstruction, oversampling)
