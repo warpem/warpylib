@@ -16,6 +16,7 @@ from . import load_images
 from . import reconstruct_subvolumes
 from . import reconstruct_volume
 from . import import_alignments
+from . import project_realspace
 
 # Bind I/O methods to TiltSeries
 TiltSeries.initialize_from_tomo_star = io.initialize_from_tomo_star
@@ -55,6 +56,9 @@ TiltSeries.get_sinc2_correction = reconstruct_subvolumes.get_sinc2_correction
 
 # Bind full volume reconstruction methods to TiltSeries
 TiltSeries.reconstruct_full = reconstruct_volume.reconstruct_full
+
+# Bind real-space projection methods to TiltSeries
+TiltSeries.transform_volume = project_realspace.transform_volume
 
 # Bind path properties to TiltSeries
 TiltSeries.name = paths.name
