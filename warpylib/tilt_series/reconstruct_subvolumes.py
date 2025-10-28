@@ -218,7 +218,6 @@ def reconstruct_subvolumes(
 
     # ifftshift and crop to original size
     result = ifftshift_and_crop_3d(real_reconstruction, oversampling)
-    print(result.shape)
 
     # Reshape back to original batch shape
     result = result.reshape(*original_shape, size, size, size)
