@@ -123,12 +123,15 @@ def reconstruct_subvolumes(
     if n_tilts != ts.n_tilts:
         raise ValueError(f"coords has {n_tilts} tilts but TiltSeries has {ts.n_tilts}")
 
+    # extraction patch size
+    subtilt_patch_size = int(size * oversampling)
+
     # Get sub-images in Fourier space (..., n_tilts, size, size//2+1)
     images_rft = ts.get_images_for_particles_rft(
         tilt_data=tilt_data,
         coords=coords,
         pixel_size=pixel_size,
-        size=size,
+        size=subtilt_patch_size,
         padding_mode=padding_mode
     )
 
@@ -142,7 +145,7 @@ def reconstruct_subvolumes(
         )
 
         # Evaluate 2D CTFs in Fourier space (..., n_tilts, size, size//2+1)
-        ctf_2d = ctfs.get_2d(size=size, device=images_rft.device)
+        ctf_2d = ctfs.get_2d(size=subtilt_patch_size, device=images_rft.device)
 
         # Apply CTF correction: multiply images by CTF
         images_rft = images_rft * ctf_2d
@@ -154,10 +157,14 @@ def reconstruct_subvolumes(
 
     # Flatten batch dimensions for processing
     # (..., n_tilts, size, size//2+1) -> (n_particles, n_tilts, size, size//2+1)
-    images_rft_flat = images_rft.reshape(-1, n_tilts, size, size // 2 + 1)
+    images_rft_flat = images_rft.reshape(
+        -1, n_tilts, subtilt_patch_size, subtilt_patch_size // 2 + 1
+    )
     n_particles = images_rft_flat.shape[0]
 
-    ctf_2d = ctf_2d.reshape(-1, n_tilts, size, size // 2 + 1)
+    ctf_2d = ctf_2d.reshape(
+        -1, n_tilts, subtilt_patch_size, subtilt_patch_size // 2 + 1
+    )
 
     # Compute rotation matrices for each tilt
     # These transform from volume space to image space
@@ -181,7 +188,7 @@ def reconstruct_subvolumes(
         rotations=tilt_matrices.transpose(-2, -1),
         shifts=shifts,
         interpolation='linear',
-        oversampling=oversampling
+        oversampling=1.0,
     )
 
     if apply_ctf:
@@ -193,7 +200,7 @@ def reconstruct_subvolumes(
             rotations=tilt_matrices.transpose(-2, -1),
             shifts=shifts,
             interpolation='linear',
-            oversampling=oversampling
+            oversampling=1.0,
         )
 
         interp_weight_rec = torch.clamp(interp_weight_rec, min=0.0, max=1.0)
