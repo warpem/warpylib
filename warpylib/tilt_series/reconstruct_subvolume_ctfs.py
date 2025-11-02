@@ -40,7 +40,8 @@ def reconstruct_subvolume_ctfs(
                 different coordinates per tilt (for tracking).
         pixel_size: Pixel size in Angstroms
         size: Volume box size in pixels (should be even)
-        oversampling: Oversampling factor for backprojection (default: 1.0)
+        oversampling: CTF patch size factor (ctf_patch_size = size * oversampling) for better
+                     sampling of high-frequency CTF oscillations (default: 1.0)
         apply_ctf: Whether to use actual CTF or flat weighting (default: True)
         ctf_weighted: Whether to apply dose/location weighting to CTFs (default: True)
         padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
@@ -65,6 +66,9 @@ def reconstruct_subvolume_ctfs(
     if n_tilts != ts.n_tilts:
         raise ValueError(f"coords has {n_tilts} tilts but TiltSeries has {ts.n_tilts}")
 
+    # CTF patch size for better sampling
+    ctf_patch_size = int(size * oversampling)
+
     # Get CTFs if requested
     if apply_ctf:
         # Get CTFs for particles (..., n_tilts)
@@ -74,8 +78,8 @@ def reconstruct_subvolume_ctfs(
             weighted=ctf_weighted
         )
 
-        # Evaluate 2D CTFs in Fourier space (..., n_tilts, size, size//2+1)
-        ctf_2d = ctfs.get_2d(size=size, device=coords.device)
+        # Evaluate 2D CTFs in Fourier space (..., n_tilts, ctf_patch_size, ctf_patch_size//2+1)
+        ctf_2d = ctfs.get_2d(size=ctf_patch_size, device=coords.device)
     else:
         # Get CTFs for particles (..., n_tilts) that don't have any oscillations, just weights (if desired)
         ctfs = ts.get_ctfs_for_particles(
@@ -86,19 +90,23 @@ def reconstruct_subvolume_ctfs(
 
         ctfs = ctfs.make_flat()
 
-        # Evaluate 2D CTFs in Fourier space (..., n_tilts, size, size//2+1)
-        ctf_2d = ctfs.get_2d(size=size, device=coords.device)
+        # Evaluate 2D CTFs in Fourier space (..., n_tilts, ctf_patch_size, ctf_patch_size//2+1)
+        ctf_2d = ctfs.get_2d(size=ctf_patch_size, device=coords.device)
 
     weights_2d = torch.abs(ctf_2d)
     ctf_2d = ctf_2d ** 2
 
     # Flatten batch dimensions for processing
-    # (..., n_tilts, size, size//2+1) -> (n_particles, n_tilts, size, size//2+1)
+    # (..., n_tilts, ctf_patch_size, ctf_patch_size//2+1) -> (n_particles, n_tilts, ctf_patch_size, ctf_patch_size//2+1)
 
-    ctf_2d = ctf_2d.reshape(-1, n_tilts, size, size // 2 + 1)
+    ctf_2d = ctf_2d.reshape(
+        -1, n_tilts, ctf_patch_size, ctf_patch_size // 2 + 1
+    )
     n_particles = ctf_2d.shape[0]
 
-    weights_2d = weights_2d.reshape(-1, n_tilts, size, size // 2 + 1)
+    weights_2d = weights_2d.reshape(
+        -1, n_tilts, ctf_patch_size, ctf_patch_size // 2 + 1
+    )
 
     # Compute rotation matrices for each tilt
     # These transform from volume space to image space
@@ -114,15 +122,15 @@ def reconstruct_subvolume_ctfs(
     shifts = torch.zeros(n_particles, n_tilts, 2, dtype=torch.float32, device=coords.device)
 
     # Backproject CTF^2 patterns weighted by |CTF| using torch_projectors
-    # Input: (n_particles, n_tilts, size, size//2+1) complex CTF^2
-    # Output: (n_particles, oversampled_size, oversampled_size, oversampled_size//2+1) complex
+    # Input: (n_particles, n_tilts, ctf_patch_size, ctf_patch_size//2+1) complex CTF^2
+    # Output: (n_particles, ctf_patch_size, ctf_patch_size, ctf_patch_size//2+1) complex
     data_rec, weight_rec = torch_projectors.backproject_2d_to_3d_forw(
         projections=torch.complex(ctf_2d, torch.zeros_like(ctf_2d)),  # CTF^2
         weights=weights_2d,  # |CTF|
         rotations=tilt_matrices.transpose(-2, -1),
         shifts=shifts,
         interpolation='linear',
-        oversampling=oversampling
+        oversampling=1.0,
     )
 
     weights_2d = torch.ones_like(weights_2d)
@@ -133,7 +141,7 @@ def reconstruct_subvolume_ctfs(
         rotations=tilt_matrices.transpose(-2, -1),
         shifts=shifts,
         interpolation='linear',
-        oversampling=oversampling
+        oversampling=1.0,
     )
 
     interp_weight_rec = torch.clamp(interp_weight_rec, min=0.0, max=1.0)
@@ -141,8 +149,8 @@ def reconstruct_subvolume_ctfs(
     # We don't want to bring voxels with interpolation weight < 1 back up, so multiply by interp_weight_rec
     data_rec = data_rec * interp_weight_rec / torch.clamp(weight_rec, min=1e-6)
 
-    if oversampling > 1.0:
-        # Crop oversampling by transforming to real space, cropping, then back to Fourier
+    if ctf_patch_size > size:
+        # Crop from larger patch size by transforming to real space, cropping, then back to Fourier
         result_padded = torch.fft.irfftn(data_rec, dim=(-3, -2, -1), norm='forward')
         result_cropped = resize_ft(result_padded, size=(size, size, size))
         # Transform back to rfft format, extract real part (CTF patterns are real-valued in Fourier space)
@@ -180,7 +188,8 @@ def reconstruct_subvolume_ctfs_single(
                 use the same coordinates (static particles).
         pixel_size: Pixel size in Angstroms
         size: Volume box size in pixels (should be even)
-        oversampling: Oversampling factor for backprojection (default: 1.0)
+        oversampling: CTF patch size factor (ctf_patch_size = size * oversampling) for better
+                     sampling of high-frequency CTF oscillations (default: 1.0)
         apply_ctf: Whether to use actual CTF or flat weighting (default: True)
         ctf_weighted: Whether to apply dose/location weighting to CTFs (default: True)
         padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
