@@ -118,7 +118,7 @@ class TestRescaleGradientFlow:
         x = torch.randn(2, 64, 64, requires_grad=True)
         y = rescale(x, size=(32, 32))
 
-        loss = y.sum()
+        loss = (y**2).sum()
         loss.backward()
 
         assert x.grad is not None
@@ -131,7 +131,7 @@ class TestRescaleGradientFlow:
         x = torch.randn(2, 32, 32, requires_grad=True)
         y = rescale(x, size=(64, 64))
 
-        loss = y.sum()
+        loss = (y**2).sum()
         loss.backward()
 
         assert x.grad is not None
@@ -144,7 +144,7 @@ class TestRescaleGradientFlow:
         x = torch.randn(2, 32, 32, 32, requires_grad=True)
         y = rescale(x, size=(16, 16, 16))
 
-        loss = y.sum()
+        loss = (y**2).sum()
         loss.backward()
 
         assert x.grad is not None
@@ -157,7 +157,7 @@ class TestRescaleGradientFlow:
         x = torch.randn(2, 16, 16, 16, requires_grad=True)
         y = rescale(x, size=(32, 32, 32))
 
-        loss = y.sum()
+        loss = (y**2).sum()
         loss.backward()
 
         assert x.grad is not None
@@ -170,7 +170,7 @@ class TestRescaleGradientFlow:
         x = torch.randn(2, 64, 64, 64, requires_grad=True)
         y = rescale(x, size=(32, 64, 128))
 
-        loss = y.sum()
+        loss = (y**2).sum()
         loss.backward()
 
         assert x.grad is not None
