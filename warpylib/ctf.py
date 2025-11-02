@@ -101,6 +101,59 @@ class CTF:
 
         return copy
 
+    def make_flat(self) -> "CTF":
+        """
+        Create a copy with all CTF oscillations flattened out, keeping only weights.
+
+        This sets all parameters that cause CTF oscillations to zero or unity,
+        while preserving tensor shapes. Useful for generating envelope functions
+        without oscillatory components.
+
+        Returns:
+            A new CTF instance with oscillations removed
+        """
+        copy = self.get_copy()
+
+        # Zero out oscillation-causing parameters, preserving tensor shapes
+        if isinstance(self.defocus, torch.Tensor):
+            copy.defocus = torch.zeros_like(self.defocus)
+        else:
+            copy.defocus = 0.0
+
+        if isinstance(self.defocus_delta, torch.Tensor):
+            copy.defocus_delta = torch.zeros_like(self.defocus_delta)
+        else:
+            copy.defocus_delta = 0.0
+
+        if isinstance(self.defocus_angle, torch.Tensor):
+            copy.defocus_angle = torch.zeros_like(self.defocus_angle)
+        else:
+            copy.defocus_angle = 0.0
+
+        if isinstance(self.phase_shift, torch.Tensor):
+            copy.phase_shift = torch.zeros_like(self.phase_shift)
+        else:
+            copy.phase_shift = 0.0
+
+        if isinstance(self.cs, torch.Tensor):
+            copy.cs = torch.zeros_like(self.cs)
+        else:
+            copy.cs = 0.0
+
+        # Set amplitude to 1 (removes phase contrast component)
+        if isinstance(self.amplitude, torch.Tensor):
+            copy.amplitude = torch.ones_like(self.amplitude)
+        else:
+            copy.amplitude = 1.0
+
+        # Zero out tensor parameters while preserving shape
+        copy.beam_tilt = torch.zeros_like(self.beam_tilt)
+        copy.beam_tilt2 = torch.zeros_like(self.beam_tilt2)
+        copy.zernike_coeffs_odd = torch.zeros_like(self.zernike_coeffs_odd)
+        copy.zernike_coeffs_even = torch.zeros_like(self.zernike_coeffs_even)
+
+        return copy
+
     @classmethod
     def load_from_xml(cls, element: etree._Element) -> "CTF":
         """
@@ -367,8 +420,8 @@ class CTF:
 
     def get_2d(
         self,
-        size: int,
-        original_size: Optional[int] = None,
+        size: int | tuple[int, int],
+        original_size: Optional[int | tuple[int, int]] = None,
         amp_squared: bool = False,
         ignore_bfactor: bool = False,
         ignore_scale: bool = False,
@@ -382,7 +435,7 @@ class CTF:
         will have that batch shape plus two spatial frequency dimensions.
 
         Args:
-            size: Size of the 2D image
+            size: Size of the 2D image. Can be int for square or (height, width) tuple
             original_size: Original image size (for scaling coordinates), defaults to size
             amp_squared: If True, return absolute value (amplitude spectrum)
             ignore_bfactor: If True, don't apply B-factor
@@ -390,9 +443,12 @@ class CTF:
             device: Device to put the result tensor on
 
         Returns:
-            Tensor of CTF values in rfft format. If all parameters are scalars,
-            shape is (size, size//2 + 1). If any parameter is batched, shape is
-            (*batch_shape, size, size//2 + 1).
+            Tensor of CTF values in rfft format. If all parameters are scalars:
+            - For square: shape is (size, size//2 + 1)
+            - For rectangular: shape is (height, width//2 + 1)
+            If any parameter is batched:
+            - For square: shape is (*batch_shape, size, size//2 + 1)
+            - For rectangular: shape is (*batch_shape, height, width//2 + 1)
         """
         if original_size is None:
             original_size = size
@@ -463,8 +519,8 @@ class CTF:
 
     @staticmethod
     def get_ctf_coords(
-        size: int,
-        original_size: Optional[int] = None,
+        size: int | tuple[int, int],
+        original_size: Optional[int | tuple[int, int]] = None,
         pixel_size: float = 1.0,
         pixel_size_delta: float = 0.0,
         pixel_size_angle: float = 0.0,
@@ -477,7 +533,7 @@ class CTF:
         (r, angle) for each point in the rfft half-Hermitian format.
 
         Args:
-            size: Size of the 2D image
+            size: Size of the 2D image. Can be int for square or (height, width) tuple
             original_size: Original image size for scaling, defaults to size
             pixel_size: Pixel size scaling factor
             pixel_size_delta: Pixel size anisotropy delta
@@ -485,25 +541,38 @@ class CTF:
             device: Device to put tensors on
 
         Returns:
-            Tuple of (r, angle) tensors, both of shape (size, size//2 + 1)
+            Tuple of (r, angle) tensors.
+            For square: shape is (size, size//2 + 1)
+            For rectangular: shape is (height, width//2 + 1)
             r: radial frequency in 1/Angstrom
             angle: angle in radians
         """
+        # Handle size input
+        if isinstance(size, int):
+            height = width = size
+        else:
+            height, width = size
+
         if original_size is None:
-            original_size = size
+            original_height = height
+            original_width = width
+        elif isinstance(original_size, int):
+            original_height = original_width = original_size
+        else:
+            original_height, original_width = original_size
 
         # Create coordinate grids for rfft format
-        # y coordinates: [0, 1, ..., size//2, -(size//2-1), ..., -1]
-        # x coordinates: [0, 1, ..., size//2]
-        y_coords = torch.fft.fftfreq(size, d=1.0, device=device) * size
-        x_coords = torch.fft.rfftfreq(size, d=1.0, device=device) * size
+        # y coordinates: [0, 1, ..., height//2, -(height//2-1), ..., -1]
+        # x coordinates: [0, 1, ..., width//2]
+        y_coords = torch.fft.fftfreq(height, d=1.0, device=device) * height
+        x_coords = torch.fft.rfftfreq(width, d=1.0, device=device) * width
 
         # Create meshgrid
         yy, xx = torch.meshgrid(y_coords, x_coords, indexing='ij')
 
         # Scale to frequency units
-        xs = xx / original_size
-        ys = yy / original_size
+        xs = xx / original_width
+        ys = yy / original_height
 
         # Calculate radius and angle
         r = torch.sqrt(xs ** 2 + ys ** 2)

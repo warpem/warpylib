@@ -14,6 +14,7 @@ from . import particle_images
 from . import paths
 from . import load_images
 from . import reconstruct_subvolumes
+from . import reconstruct_subvolume_ctfs
 from . import reconstruct_volume
 from . import import_alignments
 from . import project_realspace
@@ -54,8 +55,16 @@ TiltSeries.reconstruct_subvolumes = reconstruct_subvolumes.reconstruct_subvolume
 TiltSeries.reconstruct_subvolumes_single = reconstruct_subvolumes.reconstruct_subvolumes_single
 TiltSeries.get_sinc2_correction = reconstruct_subvolumes.get_sinc2_correction
 
+# Bind CTF volume reconstruction methods to TiltSeries
+TiltSeries.reconstruct_subvolume_ctfs = reconstruct_subvolume_ctfs.reconstruct_subvolume_ctfs
+TiltSeries.reconstruct_subvolume_ctfs_single = reconstruct_subvolume_ctfs.reconstruct_subvolume_ctfs_single
+
 # Bind full volume reconstruction methods to TiltSeries
 TiltSeries.reconstruct_full = reconstruct_volume.reconstruct_full
+
+# Import CS reconstruction module
+from . import reconstruct_volume_cs
+TiltSeries.reconstruct_full_cs = reconstruct_volume_cs.reconstruct_full_cs
 
 # Bind real-space projection methods to TiltSeries
 TiltSeries.transform_volume = project_realspace.transform_volume
