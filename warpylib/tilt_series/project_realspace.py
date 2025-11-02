@@ -14,7 +14,7 @@ def transform_volume(
     ts: "TiltSeries",
     volume: torch.Tensor,
     pixel_size: float,
-    output_dimensions_physical: torch.Tensor,
+    output_dimensions: torch.Tensor,
     tilt_ids: list[int],
     upscale_factor: int = 1
 ) -> torch.Tensor:
@@ -37,7 +37,7 @@ def transform_volume(
                 If upscale_factor > 1, this should be pre-upscaled externally.
         pixel_size: Pixel size in Angstroms (isotropic, applies to all dimensions)
                    for the ORIGINAL (non-upscaled) volume
-        output_dimensions_physical: Target volume dimensions in Angstroms, shape (3,)
+        output_dimensions: Target volume dimensions in voxels, shape (3,)
                                    Both input and output volumes are centered relative
                                    to each other
         tilt_ids: List of tilt indices to transform for (batch dimension)
@@ -47,14 +47,14 @@ def transform_volume(
 
     Returns:
         Transformed volumes, shape (n_tilts, D_out, H_out, W_out)
-        where D_out, H_out, W_out correspond to output_dimensions_physical
+        where D_out, H_out, W_out correspond to output_dimensions
     """
     # Get device from TiltSeries tensors
     device = ts.angles.device
 
     # Ensure inputs are on the correct device
     volume = volume.to(device)
-    output_dimensions_physical = output_dimensions_physical.to(device)
+    output_dimensions_physical = (output_dimensions * pixel_size).to(device)
 
     # Ensure volume is 5D for grid_sample: (N, C, D, H, W)
     if volume.ndim == 3:
@@ -77,7 +77,7 @@ def transform_volume(
     # Grid coordinate normalization factors
     grid_step = 1.0 / (ts.n_tilts - 1) if ts.n_tilts > 1 else 0.0
     dose_range = ts.max_dose - ts.min_dose
-    dose_step = 1.0 / dose_range if dose_range > 0 else 0.0
+    dose_step = 1.0 / (dose_range - 1) if dose_range > 1 else 0.0
     min_dose = ts.min_dose
 
     # Build rotation matrices for specified tilts
@@ -110,30 +110,17 @@ def transform_volume(
     # Transpose for inverse rotation
     tilt_matrices_inv = tilt_matrices.transpose(-2, -1)  # (n_tilts, 3, 3)
 
-    # Build inverted matrices if needed
-    if ts.are_angles_inverted:
-        euler_angles_flipped = torch.stack([
-            torch.zeros(n_tilts, dtype=torch.float32, device=device),  # rot = 0
-            -(angles_selected + ts.level_angle_y) * deg_to_rad,  # tilt (flipped)
-            -tilt_axis_angles_selected * deg_to_rad  # psi
-        ], dim=-1)
-        tilt_matrices_flipped = euler_to_matrix(euler_angles_flipped)
-        level_x_rad_flipped = -ts.level_angle_x * deg_to_rad
-        level_x_matrix_flipped = rotate_x(torch.tensor([level_x_rad_flipped], device=device)).squeeze(0)
-        tilt_matrices_flipped = torch.matmul(tilt_matrices_flipped, level_x_matrix_flipped)
-        tilt_matrices_flipped_inv = tilt_matrices_flipped.transpose(-2, -1)
-
     # Create output coordinate grids for all tilts
     # Each grid point represents a position in the output volume
-    z_coords = torch.linspace(0, output_dimensions_physical[2].item(), D_out, device=device)
-    y_coords = torch.linspace(0, output_dimensions_physical[1].item(), H_out, device=device)
-    x_coords = torch.linspace(0, output_dimensions_physical[0].item(), W_out, device=device)
+    z_coords = torch.linspace(0, output_dimensions[2].item() - 1, D_out, device=device)
+    y_coords = torch.linspace(0, output_dimensions[1].item() - 1, H_out, device=device)
+    x_coords = torch.linspace(0, output_dimensions[0].item() - 1, W_out, device=device)
 
     # Create meshgrid: (D, H, W)
     zz, yy, xx = torch.meshgrid(z_coords, y_coords, x_coords, indexing='ij')
 
     # Stack into coordinate tensor: (D, H, W, 3)
-    output_coords = torch.stack([xx, yy, zz], dim=-1)
+    output_coords = torch.stack([xx, yy, zz], dim=-1) * pixel_size
 
     # Replicate for all tilts: (n_tilts, D, H, W, 3)
     output_coords = output_coords.unsqueeze(0).expand(n_tilts, -1, -1, -1, -1)
@@ -223,26 +210,6 @@ def transform_volume(
     # 6. Add volume center
     coords += volume_center
 
-    # Handle inverted angles (modify Z coordinate)
-    if ts.are_angles_inverted:
-        # For inverted angles, we need to recalculate the Z coordinate
-        # using the flipped rotation matrix
-        # First, go back to the state before rotation was applied
-        coords_before_rotation = coords - volume_center + volume_warp
-
-        # Flip Z
-        coords_before_rotation_flipped = coords_before_rotation.clone()
-        coords_before_rotation_flipped[..., 2] *= -1
-
-        # Apply inverse flipped rotation
-        coords_z_flipped = torch.einsum('tji,tpi->tpj', tilt_matrices_flipped_inv, coords_before_rotation_flipped)
-
-        # Update only Z coordinate
-        coords_temp = coords.clone()
-        coords_temp[..., 2] = coords_z_flipped[..., 2] + volume_center[2] - volume_warp[..., 2]
-        coords_temp[..., 2] /= ts.size_rounding_factors[2]
-        coords[..., 2] = coords_temp[..., 2]
-
     # Reshape back to spatial grid: (n_tilts, D, H, W, 3)
     sampling_coords = coords.reshape(n_tilts, D_out, H_out, W_out, 3)
 
@@ -279,7 +246,7 @@ def transform_volume(
         normalized_sampling,
         mode='bilinear',
         padding_mode='zeros',
-        align_corners=True
+        align_corners=False
     )
 
     # Remove channel dimension: (n_tilts, D_out, H_out, W_out)

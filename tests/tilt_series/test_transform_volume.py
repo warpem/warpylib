@@ -9,6 +9,7 @@ from pathlib import Path
 
 from warpylib.tilt_series import TiltSeries
 from warpylib.ops.rescale import rescale
+from warpylib.tilt_series.reconstruct_volume import preprocess_tilt_data
 
 
 class TestTransformVolume:
@@ -69,12 +70,18 @@ class TestTransformVolume:
             batch_size=8
         )
 
+        tilt_data = preprocess_tilt_data(tilt_data,
+                                         normalize=True,
+                                         invert=True,
+                                         subvolume_size=64,
+                                         subvolume_padding=2)
+
         print(f"  Reconstruction shape: {reconstructed_volume.shape}")
         print(f"  Value range: {reconstructed_volume.min():.3f} to {reconstructed_volume.max():.3f}")
 
         # Upscale volume by 2x for better interpolation quality
         print(f"\nUpscaling reconstructed volume by 2x...")
-        upscale_factor = 4
+        upscale_factor = 2
         D, H, W = reconstructed_volume.shape
         upscaled_size = (D * upscale_factor, H * upscale_factor, W * upscale_factor)
         upscaled_volume = rescale(reconstructed_volume, size=upscaled_size)
@@ -86,18 +93,18 @@ class TestTransformVolume:
         print(f"\nTransforming volume to central tilt coordinate frame...")
 
         # Output dimensions should match the image dimensions in XY
-        output_dimensions_physical = torch.tensor([
-            ts.image_dimensions_physical[0].item(),  # X matches image
-            ts.image_dimensions_physical[1].item(),  # Y matches image
-            volume_z  # Keep Z the same
+        output_dimensions = torch.tensor([
+            tilt_data[0].shape[1],  # X matches image
+            tilt_data[0].shape[0],  # Y matches image
+            reconstructed_volume.shape[0]  # Keep Z the same
         ])
 
-        print(f"  Output dimensions (Å): {output_dimensions_physical}")
+        print(f"  Output dimensions: {output_dimensions}")
 
         transformed_volume = ts.transform_volume(
             volume=upscaled_volume,
             pixel_size=desired_pixel_size,
-            output_dimensions_physical=output_dimensions_physical,
+            output_dimensions=output_dimensions,
             tilt_ids=[central_tilt_id],
             upscale_factor=upscale_factor
         )
@@ -121,7 +128,7 @@ class TestTransformVolume:
         print(f"\nWriting comparison to: {output_path}")
 
         # Stack original and projection as two Z slices
-        comparison_stack = torch.stack([original_image, projection * (-1)], dim=0)
+        comparison_stack = torch.stack([original_image, projection], dim=0)
 
         with mrcfile.new(str(output_path), overwrite=True) as mrc:
             # MRC expects (Z, Y, X)
