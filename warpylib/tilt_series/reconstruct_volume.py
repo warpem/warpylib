@@ -10,7 +10,7 @@ import math
 from typing import Optional
 from ..ops import norm, mask_rectangular, subtract_plane, resize
 from ..ops.bandpass import bandpass
-from .reconstruct_subvolumes import get_sinc2_correction
+from ..ops.filters import get_sinc2_correction
 
 
 def reconstruct_full(

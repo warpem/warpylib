@@ -10,45 +10,7 @@ import torch_projectors
 import mrcfile
 from typing import Optional
 from ..euler import euler_to_matrix, rotate_x
-
-
-def get_sinc2_correction(size: int, oversampling: float = 1.0) -> torch.Tensor:
-    """
-    Create a 3D volume with sinc^2 interpolation correction values.
-
-    Computes the radial sinc^2 attenuation pattern from linear interpolation in Fourier space.
-    Higher oversampling reduces attenuation by effectively spreading the data over a finer grid.
-
-    Args:
-        size: Box size in pixels
-        oversampling: Oversampling factor used during reconstruction. The radial distance
-                     is divided by this factor to account for reduced attenuation. (default: 1.0)
-
-    Returns:
-        3D tensor of shape (size, size, size) with sinc^2 correction values
-    """
-    # Create 1D coordinate arrays normalized to frequency units
-    # Range: -0.5 to 0.5 (DC at center, Nyquist at edges)
-    coords = (torch.arange(size, dtype=torch.float32) - size // 2) / size
-
-    # Create 3D meshgrid
-    z, y, x = torch.meshgrid(coords, coords, coords, indexing='ij')
-
-    # Calculate radial distance
-    r = torch.sqrt(x**2 + y**2 + z**2)
-
-    # Apply oversampling scaling to radial distance
-    if oversampling > 1.0:
-        r = r / oversampling
-
-    # Compute sinc^2(π*r)
-    arg = torch.pi * r
-    # Handle sinc(0) = 1
-    correction = torch.ones_like(r)
-    mask = r != 0
-    correction[mask] = (torch.sin(arg[mask]) / arg[mask]) ** 2
-
-    return correction
+from ..ops import get_sinc2_correction
 
 
 def ifftshift_and_crop_3d(real_tensor: torch.Tensor, oversampling_factor: float) -> torch.Tensor:
@@ -77,7 +39,7 @@ def reconstruct_subvolumes(
     coords: torch.Tensor,
     pixel_size: float,
     size: int,
-    oversampling: float = 2.0,
+    oversampling: float = 1.0,
     apply_ctf: bool = True,
     ctf_weighted: bool = True,
     padding_mode: str = 'zeros',
