@@ -13,6 +13,75 @@ from ..movie.core import Movie
 from ..ops.rescale import rescale
 
 
+def load_image_dimensions(
+    tilt_series: "TiltSeries",
+    original_pixel_size: float,
+) -> None:
+    """
+    Load image dimensions from the first tilt and set physical dimensions.
+
+    This is a lightweight alternative to load_images() when you only need to
+    initialize the physical dimensions without loading the actual image data.
+
+    Parameters
+    ----------
+    tilt_series : TiltSeries
+        The tilt series object to update with dimension information.
+    original_pixel_size : float
+        Original pixel size of the images in Angstroms.
+
+    Raises
+    ------
+    ValueError
+        If the number of movie paths doesn't match the number of tilts.
+    FileNotFoundError
+        If the first image file is not found.
+    """
+    from .core import TiltSeries
+
+    n_tilts = tilt_series.n_tilts
+
+    # Validate movie paths
+    if len(tilt_series.tilt_movie_paths) != n_tilts:
+        raise ValueError(
+            f"Number of movie paths ({len(tilt_series.tilt_movie_paths)}) "
+            f"does not match number of tilts ({n_tilts})"
+        )
+
+    # Get first movie path
+    first_tilt_path = tilt_series.tilt_movie_paths[0]
+    full_path = str(
+        Path(tilt_series.data_directory_name or tilt_series.processing_directory_name)
+        / first_tilt_path
+    )
+    first_movie = Movie(path=full_path)
+
+    # Read first image to determine dimensions
+    with mrcfile.open(first_movie.average_path, mode="r", permissive=True) as mrc:
+        original_shape = mrc.data.shape
+
+    # Handle 2D vs 3D data (should be 2D for averages)
+    if len(original_shape) == 3:
+        if original_shape[0] != 1:
+            raise ValueError(
+                f"Average image has {original_shape[0]} layers, expected 1. "
+                "This should be a 2D average."
+            )
+        original_height, original_width = original_shape[1], original_shape[2]
+    else:
+        original_height, original_width = original_shape[0], original_shape[1]
+
+    # Get device from TiltSeries tensors
+    device = tilt_series.angles.device
+
+    # Update physical dimensions
+    tilt_series.image_dimensions_physical = torch.tensor(
+        [original_width * original_pixel_size, original_height * original_pixel_size],
+        dtype=torch.float32,
+        device=device,
+    )
+
+
 def load_images(
     tilt_series: "TiltSeries",
     original_pixel_size: float,

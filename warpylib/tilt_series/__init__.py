@@ -48,6 +48,7 @@ TiltSeries.get_images_for_particles_rft = particle_images.get_images_for_particl
 TiltSeries.get_images_for_particles_single_rft = particle_images.get_images_for_particles_single_rft
 
 # Bind image loading methods to TiltSeries
+TiltSeries.load_image_dimensions = load_images.load_image_dimensions
 TiltSeries.load_images = load_images.load_images
 
 # Bind subtomogram reconstruction methods to TiltSeries
