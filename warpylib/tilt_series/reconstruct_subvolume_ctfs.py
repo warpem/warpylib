@@ -151,10 +151,10 @@ def reconstruct_subvolume_ctfs(
 
     if ctf_patch_size > size:
         # Crop from larger patch size by transforming to real space, cropping, then back to Fourier
-        result_padded = torch.fft.irfftn(data_rec, dim=(-3, -2, -1), norm='forward')
+        result_padded = torch.fft.irfftn(data_rec, dim=(-3, -2, -1), norm='backward')
         result_cropped = resize_ft(result_padded, size=(size, size, size))
         # Transform back to rfft format, extract real part (CTF patterns are real-valued in Fourier space)
-        result = torch.real(torch.fft.rfftn(result_cropped, dim=(-3, -2, -1), norm='forward'))
+        result = torch.real(torch.fft.rfftn(result_cropped, dim=(-3, -2, -1), norm='backward'))
     else:
         # Already at correct size, extract real part (CTF patterns are real-valued in Fourier space)
         result = torch.real(data_rec)
