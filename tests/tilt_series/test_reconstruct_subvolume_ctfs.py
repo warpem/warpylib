@@ -365,14 +365,14 @@ class TestReconstructSubvolumeCTFs:
         for i in range(3):
             # Magnitude
             mag = torch.abs(result_multi[i])
-            central_slice = mag[:, :, 16]  # Middle of rfft dimension
+            central_slice = mag[0, :, :]  # Middle of rfft dimension
             axes[0, i].imshow(central_slice.numpy(), cmap='viridis')
             axes[0, i].set_title(f'Particle {i} - |CTF| (central slice)')
             axes[0, i].axis('off')
 
             # Real component
             real = torch.real(result_multi[i])
-            central_slice = real[:, :, 16]
+            central_slice = real[0, :, :]
             axes[1, i].imshow(central_slice.numpy(), cmap='RdBu_r')
             axes[1, i].set_title(f'Particle {i} - Real(CTF) (central slice)')
             axes[1, i].axis('off')
