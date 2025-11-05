@@ -87,8 +87,9 @@ def load_images(
     original_pixel_size: float,
     desired_pixel_size: float,
     use_denoised: bool = False,
+    load_averages: bool = True,
     load_half_averages: bool = False,
-) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
     """
     Load tilt series images (movie averages) and rescale to desired pixel size.
 
@@ -209,7 +210,11 @@ def load_images(
     needs_rescaling = (scaled_height, scaled_width) != (original_height, original_width)
 
     # Allocate output tensors
-    images = torch.zeros(n_tilts, scaled_height, scaled_width, dtype=torch.float32)
+    images = (
+        torch.zeros(n_tilts, scaled_height, scaled_width, dtype=torch.float32)
+        if load_averages
+        else None
+    )
     images_odd = (
         torch.zeros(n_tilts, scaled_height, scaled_width, dtype=torch.float32)
         if load_half_averages
@@ -223,23 +228,25 @@ def load_images(
 
     # Load and process each tilt
     for t, movie in enumerate(movies):
-        # Load main average
-        average_path = (
-            movie.average_denoised_path if use_denoised else movie.average_path
-        )
 
-        with mrcfile.open(average_path, mode="r", permissive=True) as mrc:
-            image_data = torch.from_numpy(mrc.data.copy()).float()
+        if load_averages:
+            # Load main average
+            average_path = (
+                movie.average_denoised_path if use_denoised else movie.average_path
+            )
 
-        # Remove singleton dimension if present
-        if image_data.ndim == 3:
-            image_data = image_data.squeeze(0)
+            with mrcfile.open(average_path, mode="r", permissive=True) as mrc:
+                image_data = torch.from_numpy(mrc.data.copy()).float()
 
-        # Rescale if needed
-        if needs_rescaling:
-            image_data = rescale(image_data, size=scaled_shape)
+            # Remove singleton dimension if present
+            if image_data.ndim == 3:
+                image_data = image_data.squeeze(0)
 
-        images[t] = image_data
+            # Rescale if needed
+            if needs_rescaling:
+                image_data = rescale(image_data, size=scaled_shape)
+
+            images[t] = image_data
 
         # Load half-averages if requested
         if load_half_averages:
@@ -279,4 +286,11 @@ def load_images(
 
             images_even[t] = image_even
 
-    return images, images_odd, images_even
+    if load_averages and load_half_averages:
+        return images, images_odd, images_even
+    elif load_averages:
+        return images, None, None
+    elif load_half_averages:
+        return None, images_odd, images_even
+    else:
+        return None, None, None
