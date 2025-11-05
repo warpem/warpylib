@@ -43,6 +43,7 @@ def reconstruct_subvolumes(
     apply_ctf: bool = True,
     ctf_weighted: bool = True,
     padding_mode: str = 'zeros',
+    tilt_ids: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Reconstruct subtomograms at specified 3D positions using weighted backprojection.
@@ -63,6 +64,8 @@ def reconstruct_subvolumes(
         apply_ctf: Whether to apply CTF correction (default: True)
         ctf_weighted: Whether to apply dose/location weighting to CTFs (default: True)
         padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
+        tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
+                  If None, all tilts are used. (default: None)
 
     Returns:
         Reconstructed subtomograms in real space, shape (..., size, size, size)
@@ -117,6 +120,13 @@ def reconstruct_subvolumes(
     else:
         ctf_2d = torch.ones(images_rft.shape, dtype=torch.float32, device=images_rft.device)
 
+    # Filter by tilt_ids if provided
+    if tilt_ids is not None:
+        # Select only the specified tilts
+        images_rft = images_rft[..., tilt_ids, :, :]
+        ctf_2d = ctf_2d[..., tilt_ids, :, :]
+        n_tilts = len(tilt_ids)
+
     # Flatten batch dimensions for processing
     # (..., n_tilts, size, size//2+1) -> (n_particles, n_tilts, size, size//2+1)
     images_rft_flat = images_rft.reshape(
@@ -132,10 +142,14 @@ def reconstruct_subvolumes(
     # These transform from volume space to image space
     deg_to_rad = torch.pi / 180.0
 
-    # Stack Euler angles for all tilts (n_tilts, 3)
+    # Stack Euler angles for all tilts (..., n_tilts, 3)
     euler_angles = ts.get_angle_in_all_tilts(coords=coords)
 
-    # Get Euler matrices (n_tilts, 3, 3)
+    # Filter Euler angles by tilt_ids if provided
+    if tilt_ids is not None:
+        euler_angles = euler_angles[..., tilt_ids, :]
+
+    # Get Euler matrices (..., n_tilts, 3, 3)
     tilt_matrices = euler_to_matrix(euler_angles)
 
     # No shifts needed (sub-images are already centered)
@@ -197,6 +211,7 @@ def reconstruct_subvolumes_single(
     apply_ctf: bool = True,
     ctf_weighted: bool = True,
     padding_mode: str = 'zeros',
+    tilt_ids: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Reconstruct subtomograms at static 3D positions (same across all tilts).
@@ -216,6 +231,8 @@ def reconstruct_subvolumes_single(
         apply_ctf: Whether to apply CTF correction (default: True)
         ctf_weighted: Whether to apply dose/location weighting to CTFs (default: True)
         padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
+        tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
+                  If None, all tilts are used. (default: None)
 
     Returns:
         Reconstructed subtomograms in real space, shape (..., size, size, size)
@@ -244,5 +261,6 @@ def reconstruct_subvolumes_single(
         oversampling=oversampling,
         apply_ctf=apply_ctf,
         ctf_weighted=ctf_weighted,
-        padding_mode=padding_mode
+        padding_mode=padding_mode,
+        tilt_ids=tilt_ids
     )

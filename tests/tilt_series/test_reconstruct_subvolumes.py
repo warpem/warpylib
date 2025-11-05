@@ -353,6 +353,180 @@ class TestReconstructSubvolumes:
         print(f"  grid_angle_y grad norm: {ts.grid_angle_y.values.grad.norm():.6f}")
         print(f"  grid_angle_z grad norm: {ts.grid_angle_z.values.grad.norm():.6f}")
 
+    def test_tilt_ids_subset(self):
+        """Test reconstruction using a subset of tilts via tilt_ids"""
+        ts = TiltSeries(n_tilts=5)
+        ts.angles = torch.tensor([-40.0, -20.0, 0.0, 20.0, 40.0])
+        ts.dose = torch.tensor([0.0, 25.0, 50.0, 75.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+
+        tilt_data = torch.randn(5, 128, 128)
+
+        # Coordinates for all 5 tilts
+        coords = torch.tensor([[
+            [50.0, 50.0, 25.0],
+            [50.0, 50.0, 25.0],
+            [50.0, 50.0, 25.0],
+            [50.0, 50.0, 25.0],
+            [50.0, 50.0, 25.0],
+        ]])
+
+        # Reconstruct using only tilts 0, 2, 4 (every other tilt)
+        tilt_ids = torch.tensor([0, 2, 4])
+        result_subset = ts.reconstruct_subvolumes(
+            tilt_data=tilt_data,
+            coords=coords,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False,
+            tilt_ids=tilt_ids
+        )
+
+        # Check shape is still correct
+        assert result_subset.shape == (1, 32, 32, 32)
+        assert torch.all(torch.isfinite(result_subset))
+
+        # Result should be different from using all tilts
+        result_all = ts.reconstruct_subvolumes(
+            tilt_data=tilt_data,
+            coords=coords,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False
+        )
+        assert not torch.allclose(result_subset, result_all, atol=1e-5)
+
+    def test_tilt_ids_all_tilts(self):
+        """Test that using all tilt_ids gives same result as no tilt_ids"""
+        ts = TiltSeries(n_tilts=3)
+        ts.angles = torch.tensor([-30.0, 0.0, 30.0])
+        ts.dose = torch.tensor([0.0, 50.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+
+        tilt_data = torch.randn(3, 128, 128)
+
+        coords = torch.tensor([[
+            [50.0, 50.0, 25.0],
+            [50.0, 50.0, 25.0],
+            [50.0, 50.0, 25.0],
+        ]])
+
+        # Reconstruct without tilt_ids
+        result_no_ids = ts.reconstruct_subvolumes(
+            tilt_data=tilt_data,
+            coords=coords,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False
+        )
+
+        # Reconstruct with all tilt_ids
+        tilt_ids = torch.tensor([0, 1, 2])
+        result_with_ids = ts.reconstruct_subvolumes(
+            tilt_data=tilt_data,
+            coords=coords,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False,
+            tilt_ids=tilt_ids
+        )
+
+        # Results should be identical
+        assert torch.allclose(result_no_ids, result_with_ids, atol=1e-5)
+
+    def test_tilt_ids_with_ctf(self):
+        """Test reconstruction with tilt_ids and CTF correction"""
+        ts = TiltSeries(n_tilts=4)
+        ts.angles = torch.tensor([-30.0, -10.0, 10.0, 30.0])
+        ts.dose = torch.tensor([0.0, 33.0, 66.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+
+        tilt_data = torch.randn(4, 128, 128)
+
+        coords = torch.tensor([[
+            [50.0, 50.0, 25.0],
+            [50.0, 50.0, 25.0],
+            [50.0, 50.0, 25.0],
+            [50.0, 50.0, 25.0],
+        ]])
+
+        # Reconstruct using only tilts 1 and 2 with CTF
+        tilt_ids = torch.tensor([1, 2])
+        result = ts.reconstruct_subvolumes(
+            tilt_data=tilt_data,
+            coords=coords,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=True,
+            ctf_weighted=True,
+            tilt_ids=tilt_ids
+        )
+
+        assert result.shape == (1, 32, 32, 32)
+        assert torch.all(torch.isfinite(result))
+
+    def test_tilt_ids_single_convenience_method(self):
+        """Test tilt_ids with single coordinate convenience method"""
+        ts = TiltSeries(n_tilts=4)
+        ts.angles = torch.tensor([-30.0, -10.0, 10.0, 30.0])
+        ts.dose = torch.tensor([0.0, 33.0, 66.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+
+        tilt_data = torch.randn(4, 128, 128)
+
+        # Single coordinate
+        coord = torch.tensor([50.0, 50.0, 25.0])
+
+        # Use only first and last tilts
+        tilt_ids = torch.tensor([0, 3])
+        result = ts.reconstruct_subvolumes_single(
+            tilt_data=tilt_data,
+            coords=coord,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False,
+            tilt_ids=tilt_ids
+        )
+
+        assert result.shape == (32, 32, 32)
+        assert torch.all(torch.isfinite(result))
+
+    def test_tilt_ids_batched(self):
+        """Test tilt_ids with multiple particles"""
+        ts = TiltSeries(n_tilts=5)
+        ts.angles = torch.tensor([-40.0, -20.0, 0.0, 20.0, 40.0])
+        ts.dose = torch.tensor([0.0, 25.0, 50.0, 75.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+
+        tilt_data = torch.randn(5, 128, 128)
+
+        # 2 particles, 5 tilts each
+        coords = torch.tensor([
+            [[25.0, 25.0, 25.0], [25.0, 25.0, 25.0], [25.0, 25.0, 25.0],
+             [25.0, 25.0, 25.0], [25.0, 25.0, 25.0]],
+            [[75.0, 75.0, 25.0], [75.0, 75.0, 25.0], [75.0, 75.0, 25.0],
+             [75.0, 75.0, 25.0], [75.0, 75.0, 25.0]],
+        ])
+
+        # Use tilts 1, 2, 3
+        tilt_ids = torch.tensor([1, 2, 3])
+        result = ts.reconstruct_subvolumes(
+            tilt_data=tilt_data,
+            coords=coords,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False,
+            tilt_ids=tilt_ids
+        )
+
+        assert result.shape == (2, 32, 32, 32)
+        assert torch.all(torch.isfinite(result))
+
     def test_sinc2_correction(self):
         """Test sinc^2 correction volume generation and visualization"""
         # Setup test outputs directory

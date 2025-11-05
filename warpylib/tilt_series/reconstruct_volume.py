@@ -26,6 +26,7 @@ def reconstruct_full(
     ctf_weighted: bool = True,
     correct_attenuation: bool = True,
     batch_size: int = 8,
+    tilt_ids: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Reconstruct full tomogram using tiled weighted backprojection.
@@ -53,6 +54,8 @@ def reconstruct_full(
         ctf_weighted: Whether to apply dose/location weighting to CTFs
         correct_attenuation: Whether to apply sinc^2 correction for interpolation attenuation (default: True)
         batch_size: Number of tiles to process simultaneously
+        tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
+                  If None, all tilts are used. (default: None)
 
     Returns:
         Reconstructed tomogram, shape (Z, Y, X) in pixels
@@ -146,7 +149,8 @@ def reconstruct_full(
             oversampling=1.0,
             apply_ctf=apply_ctf,
             ctf_weighted=ctf_weighted,
-            padding_mode='zeros'
+            padding_mode='zeros',
+            tilt_ids=tilt_ids
         )
 
         # Crop each reconstruction to central subvolume_size
