@@ -152,7 +152,7 @@ def reconstruct_full_cs(
             pixel_size=pixel_size,
             volume_dimensions_physical=volume_dimensions_physical,
             subvolume_size=64,
-            subvolume_padding=2.0,
+            subvolume_oversampling=2.0,
             normalize=normalize,
             invert=invert,
             apply_ctf=True,
