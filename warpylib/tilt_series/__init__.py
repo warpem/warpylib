@@ -33,9 +33,6 @@ TiltSeries.get_position_in_all_tilts = positions.get_position_in_all_tilts
 # Bind angle transformation methods to TiltSeries
 TiltSeries.get_angle_in_all_tilts_single = angles.get_angle_in_all_tilts_single
 TiltSeries.get_angle_in_all_tilts = angles.get_angle_in_all_tilts
-TiltSeries.get_particle_rotation_matrix_in_all_tilts = angles.get_particle_rotation_matrix_in_all_tilts
-TiltSeries.get_particle_angle_in_all_tilts_single = angles.get_particle_angle_in_all_tilts_single
-TiltSeries.get_particle_angle_in_all_tilts = angles.get_particle_angle_in_all_tilts
 TiltSeries.get_angles_in_one_tilt = angles.get_angles_in_one_tilt
 
 # Bind CTF generation methods to TiltSeries

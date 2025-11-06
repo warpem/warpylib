@@ -44,6 +44,7 @@ def reconstruct_subvolumes(
     ctf_weighted: bool = True,
     padding_mode: str = 'zeros',
     tilt_ids: Optional[torch.Tensor] = None,
+    angles: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Reconstruct subtomograms at specified 3D positions using weighted backprojection.
@@ -66,6 +67,9 @@ def reconstruct_subvolumes(
         padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
         tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
                   If None, all tilts are used. (default: None)
+        angles: Optional Euler angles in radians (ZYZ convention) to change reconstruction orientation,
+                shape (..., n_tilts, 3). If provided, these rotations are applied to change the
+                coordinate system of the reconstruction. (default: None)
 
     Returns:
         Reconstructed subtomograms in real space, shape (..., size, size, size)
@@ -143,7 +147,7 @@ def reconstruct_subvolumes(
     deg_to_rad = torch.pi / 180.0
 
     # Stack Euler angles for all tilts (..., n_tilts, 3)
-    euler_angles = ts.get_angle_in_all_tilts(coords=coords)
+    euler_angles = ts.get_angle_in_all_tilts(coords=coords, angles=angles)
 
     # Filter Euler angles by tilt_ids if provided
     if tilt_ids is not None:
@@ -212,6 +216,7 @@ def reconstruct_subvolumes_single(
     ctf_weighted: bool = True,
     padding_mode: str = 'zeros',
     tilt_ids: Optional[torch.Tensor] = None,
+    angles: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """
     Reconstruct subtomograms at static 3D positions (same across all tilts).
@@ -233,6 +238,9 @@ def reconstruct_subvolumes_single(
         padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
         tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
                   If None, all tilts are used. (default: None)
+        angles: Optional Euler angles in radians (ZYZ convention) to change reconstruction orientation,
+                shape (..., 3). If provided, these rotations are applied to change the
+                coordinate system of the reconstruction. (default: None)
 
     Returns:
         Reconstructed subtomograms in real space, shape (..., size, size, size)
@@ -251,6 +259,11 @@ def reconstruct_subvolumes_single(
     # Replicate coordinates for each tilt: (..., 3) -> (..., n_tilts, 3)
     per_tilt_coords = coords.unsqueeze(-2).expand(*coords.shape[:-1], ts.n_tilts, 3)
 
+    # Replicate angles if provided: (..., 3) -> (..., n_tilts, 3)
+    per_tilt_angles = None
+    if angles is not None:
+        per_tilt_angles = angles.unsqueeze(-2).expand(*angles.shape[:-1], ts.n_tilts, 3)
+
     # Reconstruct using main method
     return reconstruct_subvolumes(
         ts=ts,
@@ -262,5 +275,6 @@ def reconstruct_subvolumes_single(
         apply_ctf=apply_ctf,
         ctf_weighted=ctf_weighted,
         padding_mode=padding_mode,
-        tilt_ids=tilt_ids
+        tilt_ids=tilt_ids,
+        angles=per_tilt_angles
     )
