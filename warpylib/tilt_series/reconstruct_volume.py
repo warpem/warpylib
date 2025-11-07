@@ -7,7 +7,7 @@ into overlapping tiles, reconstructing each tile, and assembling the final volum
 
 import torch
 import math
-from typing import Optional
+from typing import Optional, Callable
 from ..ops import norm, mask_rectangular, subtract_plane, resize
 from ..ops.bandpass import bandpass
 from ..ops.filters import get_sinc2_correction
@@ -28,6 +28,7 @@ def reconstruct_full(
     correct_attenuation: bool = True,
     batch_size: int = 8,
     tilt_ids: Optional[torch.Tensor] = None,
+    tile_processing_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
 ) -> torch.Tensor:
     """
     Reconstruct full tomogram using tiled weighted backprojection.
@@ -39,8 +40,9 @@ def reconstruct_full(
     The reconstruction process:
     1. Extracts sub-images at padded size (subvolume_size * subvolume_padding)
     2. Reconstructs each tile with CTF correction
-    3. Crops to central subvolume_size
-    4. Assembles cropped tiles into final volume
+    3. Optionally applies custom processing function to reconstructed tiles
+    4. Crops to central subvolume_size
+    5. Assembles cropped tiles into final volume
 
     Args:
         ts: TiltSeries instance containing geometry and transformations
@@ -57,6 +59,10 @@ def reconstruct_full(
         batch_size: Number of tiles to process simultaneously
         tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
                   If None, all tilts are used. (default: None)
+        tile_processing_fn: Optional function to apply to each batch of reconstructed tiles before cropping.
+                           Takes tensor of shape (batch, size_padded, size_padded, size_padded) and returns
+                           tensor of the same shape. Useful for denoising, filtering, or other post-processing.
+                           (default: None)
 
     Returns:
         Reconstructed tomogram, shape (Z, Y, X) in pixels
@@ -152,6 +158,10 @@ def reconstruct_full(
             padding_mode='zeros',
             tilt_ids=tilt_ids
         )
+
+        # Apply optional custom processing function to reconstructed tiles
+        if tile_processing_fn is not None:
+            reconstructed_batch = tile_processing_fn(reconstructed_batch)
 
         # Crop each reconstruction to central subvolume_size
         # Calculate crop boundaries
