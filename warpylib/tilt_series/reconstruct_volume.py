@@ -159,6 +159,8 @@ def reconstruct_full(
             tilt_ids=tilt_ids
         )
 
+        reconstructed_batch *= subvolume_size
+
         # Apply optional custom processing function to reconstructed tiles
         if tile_processing_fn is not None:
             reconstructed_batch = tile_processing_fn(reconstructed_batch)
