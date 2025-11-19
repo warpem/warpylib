@@ -11,6 +11,22 @@ import mrcfile
 from typing import Optional
 from ..euler import euler_to_matrix, rotate_x
 from ..ops import get_sinc2_correction
+from torch_grid_utils import fftfreq_grid
+from functools import lru_cache
+
+
+@lru_cache(maxsize=2)
+def sinc2(shape, device):
+    grid = fftfreq_grid(
+        image_shape=shape,
+        rfft=False,
+        fftshift=True,
+        norm=True,
+        device=device
+    )
+    sinc2 = torch.sinc(grid) ** 2
+    correction = 1.0 / torch.clamp(sinc2, min=1e-6)
+    return correction
 
 
 def ifftshift_and_crop_3d(real_tensor: torch.Tensor, oversampling_factor: float) -> torch.Tensor:
@@ -96,19 +112,6 @@ def reconstruct_subvolumes(
 
     # extraction patch size
     subtilt_patch_size = int(size * oversampling)
-
-    # Calculate sinc^2 correction pattern for interpolation attenuation (if enabled)
-    if correct_attenuation:
-        # Generate correction for padded size with oversampling=1.0 (matching reconstruction)
-        sinc2_correction = get_sinc2_correction(
-            size=subtilt_patch_size, oversampling=1.0
-        )
-
-        # Take reciprocal to get correction factor: 1 / max(sinc^2, 1e-6)
-        # Move to same device as tilt_data
-        correction_factor = (
-                1.0 / torch.clamp(sinc2_correction, min=1e-6)
-        ).to(tilt_data.device)
 
     # Get sub-images in Fourier space (..., n_tilts, size, size//2+1)
     images_rft = ts.get_images_for_particles_rft(
@@ -213,7 +216,9 @@ def reconstruct_subvolumes(
 
     if correct_attenuation:
         # sinc2 attenutation
-        real_reconstruction = real_reconstruction * correction_factor
+        real_reconstruction = real_reconstruction * sinc2(
+            (subtilt_patch_size,) * 3, device=real_reconstruction.device
+        )
 
     # ifftshift and crop to original size
     result = ifftshift_and_crop_3d(real_reconstruction, oversampling)
