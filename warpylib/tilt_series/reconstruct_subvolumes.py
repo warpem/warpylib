@@ -236,6 +236,7 @@ def reconstruct_subvolumes_single(
     padding_mode: str = 'zeros',
     tilt_ids: Optional[torch.Tensor] = None,
     angles: Optional[torch.Tensor] = None,
+    correct_attenuation: bool = False,
 ) -> torch.Tensor:
     """
     Reconstruct subtomograms at static 3D positions (same across all tilts).
@@ -260,6 +261,7 @@ def reconstruct_subvolumes_single(
         angles: Optional Euler angles in radians (ZYZ convention) to change reconstruction orientation,
                 shape (..., 3). If provided, these rotations are applied to change the
                 coordinate system of the reconstruction. (default: None)
+        correct_attenuation: do sinc2 attenutation
 
     Returns:
         Reconstructed subtomograms in real space, shape (..., size, size, size)
@@ -295,5 +297,6 @@ def reconstruct_subvolumes_single(
         ctf_weighted=ctf_weighted,
         padding_mode=padding_mode,
         tilt_ids=tilt_ids,
-        angles=per_tilt_angles
+        angles=per_tilt_angles,
+        correct_attenuation=correct_attenuation,
     )
