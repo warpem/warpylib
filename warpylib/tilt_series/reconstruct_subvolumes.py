@@ -45,6 +45,7 @@ def reconstruct_subvolumes(
     padding_mode: str = 'zeros',
     tilt_ids: Optional[torch.Tensor] = None,
     angles: Optional[torch.Tensor] = None,
+    correct_attenuation: bool = False,
 ) -> torch.Tensor:
     """
     Reconstruct subtomograms at specified 3D positions using weighted backprojection.
@@ -70,6 +71,7 @@ def reconstruct_subvolumes(
         angles: Optional Euler angles in radians (ZYZ convention) to change reconstruction orientation,
                 shape (..., n_tilts, 3). If provided, these rotations are applied to change the
                 coordinate system of the reconstruction. (default: None)
+        correct_attenuation: Do sinc2 attenuation
 
     Returns:
         Reconstructed subtomograms in real space, shape (..., size, size, size)
@@ -94,6 +96,19 @@ def reconstruct_subvolumes(
 
     # extraction patch size
     subtilt_patch_size = int(size * oversampling)
+
+    # Calculate sinc^2 correction pattern for interpolation attenuation (if enabled)
+    if correct_attenuation:
+        # Generate correction for padded size with oversampling=1.0 (matching reconstruction)
+        sinc2_correction = get_sinc2_correction(
+            size=subtilt_patch_size, oversampling=1.0
+        )
+
+        # Take reciprocal to get correction factor: 1 / max(sinc^2, 1e-6)
+        # Move to same device as tilt_data
+        correction_factor = (
+                1.0 / torch.clamp(sinc2_correction, min=1e-6)
+        ).to(tilt_data.device)
 
     # Get sub-images in Fourier space (..., n_tilts, size, size//2+1)
     images_rft = ts.get_images_for_particles_rft(
@@ -195,6 +210,10 @@ def reconstruct_subvolumes(
     # Convert reconstruction to real space
     # irfftn with norm='forward' to match the example
     real_reconstruction = torch.fft.irfftn(data_rec, dim=(-3, -2, -1), norm='backward')
+
+    if correct_attenuation:
+        # sinc2 attenutation
+        real_reconstruction = real_reconstruction * correction_factor
 
     # ifftshift and crop to original size
     result = ifftshift_and_crop_3d(real_reconstruction, oversampling)
