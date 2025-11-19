@@ -20,7 +20,7 @@ def sinc2(shape, device):
     grid = fftfreq_grid(
         image_shape=shape,
         rfft=False,
-        fftshift=True,
+        fftshift=False,
         norm=True,
         device=device
     )
