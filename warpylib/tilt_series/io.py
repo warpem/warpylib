@@ -141,6 +141,16 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
                 ts.magnification_correction = torch.tensor([[values[0], values[1]],
                                                            [values[2], values[3]]], dtype=torch.float32)
 
+        volume_dims = root.get("VolumeDimensionsAngst")
+        if volume_dims:
+            values = [float(x) for x in volume_dims.strip("()").split(",")]
+            ts.volume_dimensions_physical = torch.tensor(values, dtype=torch.float32)
+
+        image_dims = root.get("ImageDimensionsAngst")
+        if image_dims:
+            values = [float(x) for x in image_dims.strip("()").split(",")]
+            ts.image_dimensions_physical = torch.tensor(values, dtype=torch.float32)
+
         unselect_filter = root.get("UnselectFilter")
         if unselect_filter:
             ts.unselect_filter = unselect_filter == "True"
@@ -320,6 +330,11 @@ def save_meta(ts: "TiltSeries", xml_path: str) -> None:
     # Save magnification correction as Matrix2 (4 values)
     mag = ts.magnification_correction
     root.set("MagnificationCorrection", f"{mag[0,0]:.9g}, {mag[0,1]:.9g}, {mag[1,0]:.9g}, {mag[1,1]:.9g}")
+
+    root.set("VolumeDimensionsAngst",
+             f"({ts.volume_dimensions_physical[0]:.9g}, {ts.volume_dimensions_physical[1]:.9g}, {ts.volume_dimensions_physical[2]:.9g})")
+    root.set("ImageDimensionsAngst",
+             f"({ts.image_dimensions_physical[0]:.9g}, {ts.image_dimensions_physical[1]:.9g})")
 
     root.set("UnselectFilter", str(ts.unselect_filter))
     if ts.unselect_manual is not None:
