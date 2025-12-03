@@ -300,7 +300,7 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
         return
 
 
-def save_meta(ts: "TiltSeries", xml_path: str) -> None:
+def save_meta(ts: "TiltSeries", xml_path: str = None) -> None:
     """
     Save metadata to XML file.
 
@@ -308,6 +308,10 @@ def save_meta(ts: "TiltSeries", xml_path: str) -> None:
         ts: TiltSeries instance to save
         xml_path: Path to XML file
     """
+
+    if xml_path is None:
+        xml_path = ts.xml_path
+
     # Create parent directory if needed
     Path(xml_path).parent.mkdir(parents=True, exist_ok=True)
 
