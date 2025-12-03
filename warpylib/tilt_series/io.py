@@ -113,7 +113,7 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
 
         plane_normal_str = root.get("PlaneNormal")
         if plane_normal_str:
-            values = [float(x) for x in plane_normal_str.strip("()").split(",")]
+            values = [float(x) for x in plane_normal_str.split(",")]
             ts.plane_normal = torch.tensor(values, dtype=torch.float32)
 
         level_x = root.get("LevelAngleX")
@@ -136,7 +136,7 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
         mag_correction = root.get("MagnificationCorrection")
         if mag_correction:
             # Parse as Matrix2 (4 values)
-            values = [float(x.strip()) for x in mag_correction.strip("()").split(",")]
+            values = [float(x.strip()) for x in mag_correction.split(",")]
             if len(values) == 4:
                 ts.magnification_correction = torch.tensor([[values[0], values[1]],
                                                            [values[2], values[3]]], dtype=torch.float32)
@@ -323,7 +323,7 @@ def save_meta(ts: "TiltSeries", xml_path: str = None) -> None:
 
     # Save geometry attributes
     root.set("AreAnglesInverted", str(ts.are_angles_inverted))
-    root.set("PlaneNormal", f"({ts.plane_normal[0]:.9g}, {ts.plane_normal[1]:.9g}, {ts.plane_normal[2]:.9g})")
+    root.set("PlaneNormal", f"{ts.plane_normal[0]:.9g}, {ts.plane_normal[1]:.9g}, {ts.plane_normal[2]:.9g}")
     root.set("LevelAngleX", f"{ts.level_angle_x:.9g}")
     root.set("LevelAngleY", f"{ts.level_angle_y:.9g}")
 
