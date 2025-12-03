@@ -55,7 +55,7 @@ def reconstruct_subvolumes(
     coords: torch.Tensor,
     pixel_size: float,
     size: int,
-    oversampling: float = 1.0,
+    oversampling: float = 2.0,
     apply_ctf: bool = True,
     ctf_weighted: bool = True,
     padding_mode: str = 'zeros',

@@ -62,7 +62,7 @@ class TestTransformVolume:
             pixel_size=desired_pixel_size,
             volume_dimensions_physical=(volume_x, volume_y, volume_z),
             subvolume_size=64,
-            subvolume_padding=2.0,
+            subvolume_oversampling=2.0,
             normalize=True,
             invert=True,
             apply_ctf=True,
@@ -73,8 +73,7 @@ class TestTransformVolume:
         tilt_data = preprocess_tilt_data(tilt_data,
                                          normalize=True,
                                          invert=True,
-                                         subvolume_size=64,
-                                         subvolume_padding=2)
+                                         subvolume_size=64 * 2)
 
         print(f"  Reconstruction shape: {reconstructed_volume.shape}")
         print(f"  Value range: {reconstructed_volume.min():.3f} to {reconstructed_volume.max():.3f}")

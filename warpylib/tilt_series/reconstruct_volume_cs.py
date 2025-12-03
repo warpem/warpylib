@@ -168,8 +168,7 @@ def reconstruct_full_cs(
             tilt_data=tilt_data,
             normalize=normalize,
             invert=invert,
-            subvolume_size=64,
-            subvolume_padding=2.0
+            subvolume_size=64 * 2
         )
 
         # Step 3: Upsample reconstruction by 2x
