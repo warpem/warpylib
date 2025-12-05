@@ -11,6 +11,7 @@ This implementation supports:
 - Full API compliance with torch-cubic-spline-grids
 """
 
+from functools import lru_cache
 from typing import Callable, Optional, Tuple, Union
 import einops
 import torch
@@ -27,12 +28,10 @@ EINSPLINE_BASIS_MATRIX = torch.tensor([
 ], dtype=torch.float32)
 
 
+@lru_cache(maxsize=10000)
 def _build_1d_system_matrix(M: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
     """
-    Build the (M+2)x(M+2) system matrix for 1D interpolating B-spline.
-
-    This matrix is the same for all channels and data values, depending only on M.
-    Can be cached and reused.
+    Build and cache the (M+2)x(M+2) system matrix for 1D interpolating B-spline.
 
     Args:
         M: Number of data points
@@ -42,28 +41,23 @@ def _build_1d_system_matrix(M: int, dtype: torch.dtype, device: torch.device) ->
     Returns:
         A: (M+2, M+2) system matrix
     """
-    # Compute grid spacing (assuming grid covers [0, 1])
     delta = 1.0 / (M - 1)
     delta_inv_sq = (1.0 / delta) ** 2
 
-    # Build system matrix A: (M+2) x (M+2)
     A = torch.zeros(M + 2, M + 2, dtype=dtype, device=device)
 
     # Row 0: Left boundary condition (second derivative = 0)
-    # c_0 - 2*c_1 + c_2 = 0
     A[0, 0] = delta_inv_sq
     A[0, 1] = -2.0 * delta_inv_sq
     A[0, 2] = delta_inv_sq
 
-    # Rows 1 to M: Interpolation equations
-    # (1/6)*c_{i-1} + (2/3)*c_i + (1/6)*c_{i+1} = data[i-1]
-    for i in range(1, M + 1):
-        A[i, i - 1] = 1.0 / 6.0
-        A[i, i] = 2.0 / 3.0
-        A[i, i + 1] = 1.0 / 6.0
+    # Rows 1 to M: Interpolation equations (vectorized)
+    diag_indices = torch.arange(1, M + 1, device=device)
+    A[diag_indices, diag_indices - 1] = 1.0 / 6.0
+    A[diag_indices, diag_indices] = 2.0 / 3.0
+    A[diag_indices, diag_indices + 1] = 1.0 / 6.0
 
     # Row M+1: Right boundary condition (second derivative = 0)
-    # c_{M-1} - 2*c_M + c_{M+1} = 0
     A[M + 1, M - 1] = delta_inv_sq
     A[M + 1, M] = -2.0 * delta_inv_sq
     A[M + 1, M + 1] = delta_inv_sq
