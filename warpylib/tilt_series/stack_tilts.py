@@ -22,7 +22,6 @@ def stack_tilts(
     ts: "TiltSeries",
     tilt_data: torch.Tensor,
     pixel_size: float,
-    volume_dimensions_physical: tuple,
     create_thumbnails: bool = True,
 ) -> None:
     """
@@ -40,9 +39,6 @@ def stack_tilts(
         Tilt images with shape (n_tilts, H, W).
     pixel_size : float
         Pixel size of the tilt data in Angstroms.
-    volume_dimensions_physical : tuple
-        Volume dimensions in Angstroms (X, Y, Z). This will be stored on the
-        TiltSeries object.
     create_thumbnails : bool, optional
         Whether to create PNG thumbnails for each tilt. Default is True.
 
@@ -57,10 +53,6 @@ def stack_tilts(
     region of diameter equal to half the image size, then scales to 0-255 range
     with median at 128 and +/-3 sigma spanning the full range.
     """
-    # Store volume dimensions on TiltSeries
-    ts.volume_dimensions_physical = torch.tensor(
-        volume_dimensions_physical, dtype=torch.float32, device=tilt_data.device
-    )
 
     # Create output directories
     Path(ts.tilt_stack_dir).mkdir(parents=True, exist_ok=True)
