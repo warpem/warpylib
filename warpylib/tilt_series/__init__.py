@@ -18,6 +18,7 @@ from . import reconstruct_subvolume_ctfs
 from . import reconstruct_volume
 from . import import_alignments
 from . import project_realspace
+from . import stack_tilts
 
 # Bind I/O methods to TiltSeries
 TiltSeries.initialize_from_tomo_star = io.initialize_from_tomo_star
@@ -66,6 +67,9 @@ TiltSeries.reconstruct_full_cs = reconstruct_volume_cs.reconstruct_full_cs
 
 # Bind real-space projection methods to TiltSeries
 TiltSeries.transform_volume = project_realspace.transform_volume
+
+# Bind tilt stack creation methods to TiltSeries
+TiltSeries.stack_tilts = stack_tilts.stack_tilts
 
 # Bind path properties to TiltSeries
 TiltSeries.name = paths.name
