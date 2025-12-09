@@ -113,7 +113,7 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
 
         plane_normal_str = root.get("PlaneNormal")
         if plane_normal_str:
-            values = [float(x) for x in plane_normal_str.split(",")]
+            values = [float(x) for x in plane_normal_str.strip('()').split(",")]
             ts.plane_normal = torch.tensor(values, dtype=torch.float32)
 
         level_x = root.get("LevelAngleX")
