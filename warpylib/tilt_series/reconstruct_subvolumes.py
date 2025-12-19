@@ -62,6 +62,8 @@ def reconstruct_subvolumes(
     tilt_ids: Optional[torch.Tensor] = None,
     angles: Optional[torch.Tensor] = None,
     correct_attenuation: bool = False,
+    ctf_ignore_below_res: Optional[float] = None,
+    ctf_ignore_transition_res: Optional[float] = None,
 ) -> torch.Tensor:
     """
     Reconstruct subtomograms at specified 3D positions using weighted backprojection.
@@ -88,6 +90,10 @@ def reconstruct_subvolumes(
                 shape (..., n_tilts, 3). If provided, these rotations are applied to change the
                 coordinate system of the reconstruction. (default: None)
         correct_attenuation: Do sinc2 attenuation
+        ctf_ignore_below_res: Resolution in Angstroms below which CTF is fully ignored (set to 1).
+                              Must be greater than ctf_ignore_transition_res. (default: None)
+        ctf_ignore_transition_res: Resolution in Angstroms at which CTF is fully applied.
+                                   Required when ctf_ignore_below_res is set. (default: None)
 
     Returns:
         Reconstructed subtomograms in real space, shape (..., size, size, size)
@@ -132,7 +138,12 @@ def reconstruct_subvolumes(
         )
 
         # Evaluate 2D CTFs in Fourier space (..., n_tilts, size, size//2+1)
-        ctf_2d = ctfs.get_2d(size=subtilt_patch_size, device=images_rft.device)
+        ctf_2d = ctfs.get_2d(
+            size=subtilt_patch_size,
+            device=images_rft.device,
+            ignore_below_res=ctf_ignore_below_res,
+            ignore_transition_res=ctf_ignore_transition_res,
+        )
 
         # Apply CTF correction: multiply images by CTF
         images_rft = images_rft * ctf_2d
@@ -242,6 +253,8 @@ def reconstruct_subvolumes_single(
     tilt_ids: Optional[torch.Tensor] = None,
     angles: Optional[torch.Tensor] = None,
     correct_attenuation: bool = False,
+    ctf_ignore_below_res: Optional[float] = None,
+    ctf_ignore_transition_res: Optional[float] = None,
 ) -> torch.Tensor:
     """
     Reconstruct subtomograms at static 3D positions (same across all tilts).
@@ -267,6 +280,10 @@ def reconstruct_subvolumes_single(
                 shape (..., 3). If provided, these rotations are applied to change the
                 coordinate system of the reconstruction. (default: None)
         correct_attenuation: do sinc2 attenutation
+        ctf_ignore_below_res: Resolution in Angstroms below which CTF is fully ignored (set to 1).
+                              Must be greater than ctf_ignore_transition_res. (default: None)
+        ctf_ignore_transition_res: Resolution in Angstroms at which CTF is fully applied.
+                                   Required when ctf_ignore_below_res is set. (default: None)
 
     Returns:
         Reconstructed subtomograms in real space, shape (..., size, size, size)
@@ -304,4 +321,6 @@ def reconstruct_subvolumes_single(
         tilt_ids=tilt_ids,
         angles=per_tilt_angles,
         correct_attenuation=correct_attenuation,
+        ctf_ignore_below_res=ctf_ignore_below_res,
+        ctf_ignore_transition_res=ctf_ignore_transition_res,
     )

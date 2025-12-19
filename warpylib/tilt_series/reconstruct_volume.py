@@ -29,6 +29,8 @@ def reconstruct_full(
     batch_size: int = 8,
     tilt_ids: Optional[torch.Tensor] = None,
     tile_processing_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    ctf_ignore_below_res: Optional[float] = None,
+    ctf_ignore_transition_res: Optional[float] = None,
 ) -> torch.Tensor:
     """
     Reconstruct full tomogram using tiled weighted backprojection.
@@ -63,6 +65,10 @@ def reconstruct_full(
                            Takes tensor of shape (batch, size_padded, size_padded, size_padded) and returns
                            tensor of the same shape. Useful for denoising, filtering, or other post-processing.
                            (default: None)
+        ctf_ignore_below_res: Resolution in Angstroms below which CTF is fully ignored (set to 1).
+                              Must be greater than ctf_ignore_transition_res. (default: None)
+        ctf_ignore_transition_res: Resolution in Angstroms at which CTF is fully applied.
+                                   Required when ctf_ignore_below_res is set. (default: None)
 
     Returns:
         Reconstructed tomogram, shape (Z, Y, X) in pixels
@@ -156,7 +162,9 @@ def reconstruct_full(
             apply_ctf=apply_ctf,
             ctf_weighted=ctf_weighted,
             padding_mode='zeros',
-            tilt_ids=tilt_ids
+            tilt_ids=tilt_ids,
+            ctf_ignore_below_res=ctf_ignore_below_res,
+            ctf_ignore_transition_res=ctf_ignore_transition_res,
         )
 
         reconstructed_batch *= subvolume_size
