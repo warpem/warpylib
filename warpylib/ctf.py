@@ -363,6 +363,8 @@ class CTF:
         amp_squared: bool = False,
         ignore_bfactor: bool = False,
         ignore_scale: bool = False,
+        ignore_below_res: Optional[float] = None,
+        ignore_transition_res: Optional[float] = None,
         device: Optional[torch.device] = None
     ) -> torch.Tensor:
         """
@@ -377,6 +379,12 @@ class CTF:
             amp_squared: If True, return absolute value (amplitude spectrum)
             ignore_bfactor: If True, don't apply B-factor
             ignore_scale: If True, don't apply scale factor
+            ignore_below_res: Resolution in Angstrom below which CTF is set to 1.
+                At frequencies lower than 1/ignore_below_res, the CTF is fully ignored.
+            ignore_transition_res: Resolution in Angstrom at which CTF is fully applied.
+                At frequencies higher than 1/ignore_transition_res, the full CTF is used.
+                Between ignore_below_res and ignore_transition_res, raised cosine
+                interpolation is applied. Required if ignore_below_res is set.
             device: Device to put the result tensor on
 
         Returns:
@@ -416,7 +424,31 @@ class CTF:
         if amp_squared:
             retval = torch.abs(retval)
 
-        return retval * scale[..., None]
+        retval = retval * scale[..., None]
+
+        # Apply low-frequency ignore with raised cosine interpolation
+        if ignore_below_res is not None:
+            if ignore_transition_res is None:
+                raise ValueError("ignore_transition_res must be set when ignore_below_res is set")
+            if ignore_below_res <= ignore_transition_res:
+                raise ValueError("ignore_below_res must be greater than ignore_transition_res (lower resolution = lower frequency)")
+
+            # Convert resolution to frequency (1/Å)
+            freq_low = 1.0 / ignore_below_res
+            freq_high = 1.0 / ignore_transition_res
+
+            # freq is the spatial frequency at each point
+            # Compute normalized position in transition zone
+            t = (freq - freq_low) / (freq_high - freq_low)
+            t = torch.clamp(t, 0.0, 1.0)
+
+            # Raised cosine interpolation: 0.5 * (1 - cos(π * t))
+            weight = 0.5 * (1.0 - torch.cos(torch.pi * t))
+
+            # Interpolate from 1 to actual CTF value
+            retval = 1.0 * (1.0 - weight) + retval * weight
+
+        return retval
 
     def get_2d(
         self,
@@ -425,6 +457,8 @@ class CTF:
         amp_squared: bool = False,
         ignore_bfactor: bool = False,
         ignore_scale: bool = False,
+        ignore_below_res: Optional[float] = None,
+        ignore_transition_res: Optional[float] = None,
         device: Optional[torch.device] = None
     ) -> torch.Tensor:
         """
@@ -440,6 +474,12 @@ class CTF:
             amp_squared: If True, return absolute value (amplitude spectrum)
             ignore_bfactor: If True, don't apply B-factor
             ignore_scale: If True, don't apply scale factor
+            ignore_below_res: Resolution in Angstrom below which CTF is set to 1.
+                At frequencies lower than 1/ignore_below_res, the CTF is fully ignored.
+            ignore_transition_res: Resolution in Angstrom at which CTF is fully applied.
+                At frequencies higher than 1/ignore_transition_res, the full CTF is used.
+                Between ignore_below_res and ignore_transition_res, raised cosine
+                interpolation is applied. Required if ignore_below_res is set.
             device: Device to put the result tensor on
 
         Returns:
@@ -514,6 +554,28 @@ class CTF:
 
         if not ignore_scale:
             retval = scale[..., None, None] * retval
+
+        # Apply low-frequency ignore with raised cosine interpolation
+        if ignore_below_res is not None:
+            if ignore_transition_res is None:
+                raise ValueError("ignore_transition_res must be set when ignore_below_res is set")
+            if ignore_below_res <= ignore_transition_res:
+                raise ValueError("ignore_below_res must be greater than ignore_transition_res (lower resolution = lower frequency)")
+
+            # Convert resolution to frequency (1/Å)
+            freq_low = 1.0 / ignore_below_res
+            freq_high = 1.0 / ignore_transition_res
+
+            # r is the radial spatial frequency at each point
+            # Compute normalized position in transition zone
+            t = (r - freq_low) / (freq_high - freq_low)
+            t = torch.clamp(t, 0.0, 1.0)
+
+            # Raised cosine interpolation: 0.5 * (1 - cos(π * t))
+            weight = 0.5 * (1.0 - torch.cos(torch.pi * t))
+
+            # Interpolate from 1 to actual CTF value
+            retval = 1.0 * (1.0 - weight) + retval * weight
 
         return retval
 
