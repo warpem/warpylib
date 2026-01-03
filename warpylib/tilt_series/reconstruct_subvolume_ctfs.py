@@ -23,7 +23,6 @@ def reconstruct_subvolume_ctfs(
     oversampling: float = 1.0,
     apply_ctf: bool = True,
     ctf_weighted: bool = True,
-    padding_mode: str = 'zeros',
     tilt_ids: Optional[torch.Tensor] = None,
     angles: Optional[torch.Tensor] = None,
     ctf_ignore_below_res: Optional[float] = None,
@@ -48,7 +47,6 @@ def reconstruct_subvolume_ctfs(
                      sampling of high-frequency CTF oscillations (default: 1.0)
         apply_ctf: Whether to use actual CTF or flat weighting (default: True)
         ctf_weighted: Whether to apply dose/location weighting to CTFs (default: True)
-        padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
         tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
                   If None, all tilts are used. (default: None)
         angles: Optional Euler angles in radians (ZYZ convention) to change reconstruction orientation,
@@ -207,7 +205,6 @@ def reconstruct_subvolume_ctfs_single(
     oversampling: float = 1.0,
     apply_ctf: bool = True,
     ctf_weighted: bool = True,
-    padding_mode: str = 'zeros',
     tilt_ids: Optional[torch.Tensor] = None,
     angles: Optional[torch.Tensor] = None,
     ctf_ignore_below_res: Optional[float] = None,
@@ -230,7 +227,6 @@ def reconstruct_subvolume_ctfs_single(
                      sampling of high-frequency CTF oscillations (default: 1.0)
         apply_ctf: Whether to use actual CTF or flat weighting (default: True)
         ctf_weighted: Whether to apply dose/location weighting to CTFs (default: True)
-        padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
         tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
                   If None, all tilts are used. (default: None)
         angles: Optional Euler angles in radians (ZYZ convention) to change reconstruction orientation,
@@ -271,7 +267,6 @@ def reconstruct_subvolume_ctfs_single(
         oversampling=oversampling,
         apply_ctf=apply_ctf,
         ctf_weighted=ctf_weighted,
-        padding_mode=padding_mode,
         tilt_ids=tilt_ids,
         angles=per_tilt_angles,
         ctf_ignore_below_res=ctf_ignore_below_res,
