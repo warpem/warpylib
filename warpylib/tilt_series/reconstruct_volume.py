@@ -21,6 +21,7 @@ def reconstruct_full(
     volume_dimensions_physical: tuple,
     subvolume_size: int = 64,
     subvolume_oversampling: float = 2.0,
+    reconstruction_oversampling: float = 1.0,
     normalize: bool = True,
     invert: bool = False,
     apply_ctf: bool = True,
@@ -52,7 +53,9 @@ def reconstruct_full(
         pixel_size: Pixel size of tilt_data and output reconstruction (Angstroms)
         volume_dimensions_physical: Volume size in Angstroms (X, Y, Z)
         subvolume_size: Size of sub-volumes for tiled reconstruction (pixels)
-        subvolume_oversampling: Padding factor - extracts boxes of size (subvolume_size * subvolume_padding)
+        subvolume_oversampling: Padding factor - reconstructs boxes of size (subvolume_size * subvolume_padding);
+                                these dimensions are also used for tile_processing_fn if provided.
+        reconstruction_oversampling: Oversampling factor during reconstruction (default: 1.0)
         normalize: Whether to normalize tilt images
         invert: Whether to invert contrast
         apply_ctf: Whether to apply CTF correction
@@ -158,7 +161,7 @@ def reconstruct_full(
             coords=batch_coords_physical,
             pixel_size=pixel_size,
             size=size_padded,
-            oversampling=1.0,
+            oversampling=reconstruction_oversampling,
             apply_ctf=apply_ctf,
             ctf_weighted=ctf_weighted,
             padding_mode='zeros',
