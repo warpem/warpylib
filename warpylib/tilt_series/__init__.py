@@ -15,6 +15,7 @@ from . import paths
 from . import load_images
 from . import reconstruct_subvolumes
 from . import reconstruct_subvolume_ctfs
+from . import reconstruct_subvolume_solid_ctfs
 from . import reconstruct_volume
 from . import import_alignments
 from . import project_realspace
@@ -57,6 +58,8 @@ TiltSeries.get_sinc2_correction = reconstruct_subvolumes.get_sinc2_correction
 # Bind CTF volume reconstruction methods to TiltSeries
 TiltSeries.reconstruct_subvolume_ctfs = reconstruct_subvolume_ctfs.reconstruct_subvolume_ctfs
 TiltSeries.reconstruct_subvolume_ctfs_single = reconstruct_subvolume_ctfs.reconstruct_subvolume_ctfs_single
+TiltSeries.reconstruct_subvolume_solid_ctfs = reconstruct_subvolume_solid_ctfs.reconstruct_subvolume_solid_ctfs
+TiltSeries.reconstruct_subvolume_solid_ctfs_single = reconstruct_subvolume_solid_ctfs.reconstruct_subvolume_solid_ctfs_single
 
 # Bind full volume reconstruction methods to TiltSeries
 TiltSeries.reconstruct_full = reconstruct_volume.reconstruct_full
