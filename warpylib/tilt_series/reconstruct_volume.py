@@ -29,9 +29,10 @@ def reconstruct_full(
     correct_attenuation: bool = True,
     batch_size: int = 8,
     tilt_ids: Optional[torch.Tensor] = None,
-    tile_processing_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    tile_processing_fn: Optional[Callable[[torch.Tensor, Optional[torch.Tensor]], torch.Tensor]] = None,
     ctf_ignore_below_res: Optional[float] = None,
     ctf_ignore_transition_res: Optional[float] = None,
+    additional_tilt_data: torch.Tensor = None,
 ) -> torch.Tensor:
     """
     Reconstruct full tomogram using tiled weighted backprojection.
@@ -65,13 +66,18 @@ def reconstruct_full(
         tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
                   If None, all tilts are used. (default: None)
         tile_processing_fn: Optional function to apply to each batch of reconstructed tiles before cropping.
-                           Takes tensor of shape (batch, size_padded, size_padded, size_padded) and returns
-                           tensor of the same shape. Useful for denoising, filtering, or other post-processing.
+                           Takes tensor of shape (batch, size_padded, size_padded, size_padded), and an optional
+                           tensor of the same shape reconstructed from additional_tilt_data if provided,
+                           and returns tensor of the same shape. Useful for denoising, filtering, or other
+                           post-processing.
                            (default: None)
         ctf_ignore_below_res: Resolution in Angstroms below which CTF is fully ignored (set to 1).
                               Must be greater than ctf_ignore_transition_res. (default: None)
         ctf_ignore_transition_res: Resolution in Angstroms at which CTF is fully applied.
                                    Required when ctf_ignore_below_res is set. (default: None)
+        additional_tilt_data: Optional additional tilt data for a second reconstruction that is passed
+                              to tilt_processing_fn, e.g. for noise estimation. Shape must match tilt_data.
+                              (default: None)
 
     Returns:
         Reconstructed tomogram, shape (Z, Y, X) in pixels
@@ -106,6 +112,16 @@ def reconstruct_full(
         invert=invert,
         subvolume_size=subvolume_size * subvolume_oversampling
     )
+
+    if additional_tilt_data is not None:
+        additional_tilt_data_processed = preprocess_tilt_data(
+            tilt_data=additional_tilt_data,
+            normalize=normalize,
+            invert=invert,
+            subvolume_size=subvolume_size * subvolume_oversampling
+        )
+    else:
+        additional_tilt_data_processed = None
 
     # Calculate padded extraction size (even)
     size_padded = int(subvolume_size * subvolume_oversampling)
@@ -169,12 +185,33 @@ def reconstruct_full(
             ctf_ignore_below_res=ctf_ignore_below_res,
             ctf_ignore_transition_res=ctf_ignore_transition_res,
         )
-
         reconstructed_batch *= subvolume_size
+
+        if additional_tilt_data_processed is not None:
+            # Perform second reconstruction for additional tilt data
+            additional_reconstructed_batch = ts.reconstruct_subvolumes_single(
+                tilt_data=additional_tilt_data_processed,
+                coords=batch_coords_physical,
+                pixel_size=pixel_size,
+                size=size_padded,
+                oversampling=reconstruction_oversampling,
+                apply_ctf=apply_ctf,
+                ctf_weighted=ctf_weighted,
+                padding_mode='zeros',
+                tilt_ids=tilt_ids,
+                ctf_ignore_below_res=ctf_ignore_below_res,
+                ctf_ignore_transition_res=ctf_ignore_transition_res,
+            )
+            additional_reconstructed_batch *= subvolume_size
+        else:
+            additional_reconstructed_batch = None
 
         # Apply optional custom processing function to reconstructed tiles
         if tile_processing_fn is not None:
-            reconstructed_batch = tile_processing_fn(reconstructed_batch)
+            reconstructed_batch = tile_processing_fn(
+                reconstructed_batch,
+                additional_reconstructed_batch
+            )
 
         # Crop each reconstruction to central subvolume_size
         # Calculate crop boundaries
