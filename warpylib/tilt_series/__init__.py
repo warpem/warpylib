@@ -20,6 +20,7 @@ from . import reconstruct_volume
 from . import import_alignments
 from . import project_realspace
 from . import stack_tilts
+from . import utils
 
 # Bind I/O methods to TiltSeries
 TiltSeries.initialize_from_tomo_star = io.initialize_from_tomo_star
@@ -73,6 +74,10 @@ TiltSeries.transform_volume = project_realspace.transform_volume
 
 # Bind tilt stack creation methods to TiltSeries
 TiltSeries.stack_tilts = stack_tilts.stack_tilts
+
+# Bind utility methods to TiltSeries
+TiltSeries.apply_tilt_shift_and_propagate = utils.apply_tilt_shift_and_propagate
+TiltSeries.apply_tomogram_shift_3d = utils.apply_tomogram_shift_3d
 
 # Bind path properties to TiltSeries
 TiltSeries.name = paths.name
