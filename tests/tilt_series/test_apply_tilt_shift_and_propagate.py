@@ -40,8 +40,7 @@ class TestApplyTiltShiftAndPropagate:
         # Apply 100 A shift in X at central tilt (index 1, angle 0)
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=1,
-            shift_x=100.0,
-            shift_y=0.0,
+            shift=torch.tensor([100.0, 0.0]),
             propagate_to="both"
         )
 
@@ -71,8 +70,7 @@ class TestApplyTiltShiftAndPropagate:
         # Apply 100 A shift in X at highest tilt (index 2, angle +30°)
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=2,
-            shift_x=100.0,
-            shift_y=0.0,
+            shift=torch.tensor([100.0, 0.0]),
             propagate_to="both"
         )
 
@@ -99,8 +97,7 @@ class TestApplyTiltShiftAndPropagate:
         # Apply shift with both X and Y components at central tilt
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=1,
-            shift_x=100.0,
-            shift_y=50.0,
+            shift=torch.tensor([100.0, 50.0]),
             propagate_to="both"
         )
 
@@ -117,8 +114,7 @@ class TestApplyTiltShiftAndPropagate:
         # Apply shift at central tilt, propagate only to lower indices
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=1,
-            shift_x=100.0,
-            shift_y=0.0,
+            shift=torch.tensor([100.0, 0.0]),
             propagate_to="lower"
         )
 
@@ -139,8 +135,7 @@ class TestApplyTiltShiftAndPropagate:
         # Apply shift at central tilt, propagate only to higher indices
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=1,
-            shift_x=100.0,
-            shift_y=0.0,
+            shift=torch.tensor([100.0, 0.0]),
             propagate_to="higher"
         )
 
@@ -165,8 +160,7 @@ class TestApplyTiltShiftAndPropagate:
         # Apply shift at central tilt
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=1,
-            shift_x=100.0,
-            shift_y=50.0,
+            shift=torch.tensor([100.0, 50.0]),
             propagate_to="both"
         )
 
@@ -184,10 +178,10 @@ class TestApplyTiltShiftAndPropagate:
         ts = self.create_simple_tilt_series([-30.0, 0.0, 30.0])
 
         with pytest.raises(ValueError, match="source_tilt_id must be between"):
-            ts.apply_tilt_shift_and_propagate(source_tilt_id=-1, shift_x=100.0, shift_y=0.0)
+            ts.apply_tilt_shift_and_propagate(source_tilt_id=-1, shift=torch.tensor([100.0, 0.0]))
 
         with pytest.raises(ValueError, match="source_tilt_id must be between"):
-            ts.apply_tilt_shift_and_propagate(source_tilt_id=3, shift_x=100.0, shift_y=0.0)
+            ts.apply_tilt_shift_and_propagate(source_tilt_id=3, shift=torch.tensor([100.0, 0.0]))
 
     def test_invalid_propagate_to(self):
         """Test error handling for invalid propagate_to value."""
@@ -195,7 +189,7 @@ class TestApplyTiltShiftAndPropagate:
 
         with pytest.raises(ValueError, match="propagate_to must be"):
             ts.apply_tilt_shift_and_propagate(
-                source_tilt_id=1, shift_x=100.0, shift_y=0.0, propagate_to="invalid"
+                source_tilt_id=1, shift=torch.tensor([100.0, 0.0]), propagate_to="invalid"
             )
 
     def test_high_tilt_angle_attenuation(self):
@@ -208,8 +202,7 @@ class TestApplyTiltShiftAndPropagate:
 
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=0,  # source at 0°
-            shift_x=100.0,
-            shift_y=0.0,
+            shift=torch.tensor([100.0, 0.0]),
             propagate_to="both"
         )
 
@@ -243,8 +236,7 @@ class TestApplyTiltShiftAndPropagate:
         # With 90° tilt axis, X is parallel to tilt axis → should stay constant
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=1,
-            shift_x=100.0,
-            shift_y=0.0,
+            shift=torch.tensor([100.0, 0.0]),
             propagate_to="both"
         )
 
@@ -278,8 +270,7 @@ class TestApplyTiltShiftAndPropagate:
         # With 90° tilt axis, Y is perpendicular to tilt axis → should attenuate
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=1,
-            shift_x=0.0,
-            shift_y=100.0,
+            shift=torch.tensor([0.0, 100.0]),
             propagate_to="both"
         )
 
@@ -319,8 +310,7 @@ class TestApplyTiltShiftAndPropagate:
         # Apply an X shift at tilt 0°
         ts.apply_tilt_shift_and_propagate(
             source_tilt_id=0,
-            shift_x=100.0,
-            shift_y=0.0,
+            shift=torch.tensor([100.0, 0.0]),
             propagate_to="both"
         )
 
@@ -342,6 +332,30 @@ class TestApplyTiltShiftAndPropagate:
         # Both components should be non-zero due to 45° mixing
         assert abs(x_at_60) > 1.0, f"Expected non-zero X, got {x_at_60:.2f}"
         assert abs(y_at_60) > 1.0, f"Expected non-zero Y, got {y_at_60:.2f}"
+
+    def test_gradient_flow(self):
+        """Test that gradients flow back through the shift tensor."""
+        ts = self.create_simple_tilt_series([-30.0, 0.0, 30.0])
+
+        # Create shift with requires_grad
+        shift = torch.tensor([100.0, 50.0], requires_grad=True)
+
+        ts.apply_tilt_shift_and_propagate(
+            source_tilt_id=1,
+            shift=shift,
+            propagate_to="both"
+        )
+
+        # Compute a simple loss from the offsets
+        loss = ts.tilt_axis_offset_x.sum() + ts.tilt_axis_offset_y.sum()
+
+        # Backpropagate
+        loss.backward()
+
+        # Check that gradients exist and are non-zero
+        assert shift.grad is not None, "No gradient computed for shift"
+        assert shift.grad[0].item() != 0.0, "Gradient for shift_x is zero"
+        assert shift.grad[1].item() != 0.0, "Gradient for shift_y is zero"
 
 
 if __name__ == "__main__":

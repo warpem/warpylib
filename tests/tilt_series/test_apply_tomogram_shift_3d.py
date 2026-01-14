@@ -34,7 +34,7 @@ class TestApplyTomogramShift3D:
         """
         ts = self.create_simple_tilt_series([-30.0, 0.0, 30.0])
 
-        ts.apply_tomogram_shift_3d(shift_x=100.0, shift_y=0.0, shift_z=0.0)
+        ts.apply_tomogram_shift_3d(torch.tensor([100.0, 0.0, 0.0]))
 
         # X shift scales with cos(tilt_angle)
         expected_x = [
@@ -58,7 +58,7 @@ class TestApplyTomogramShift3D:
         """
         ts = self.create_simple_tilt_series([-30.0, 0.0, 30.0])
 
-        ts.apply_tomogram_shift_3d(shift_x=0.0, shift_y=100.0, shift_z=0.0)
+        ts.apply_tomogram_shift_3d(torch.tensor([0.0, 100.0, 0.0]))
 
         # Y shift is constant across all tilts (parallel to tilt axis)
         for i in range(3):
@@ -76,7 +76,7 @@ class TestApplyTomogramShift3D:
         """
         ts = self.create_simple_tilt_series([-30.0, 0.0, 30.0])
 
-        ts.apply_tomogram_shift_3d(shift_x=0.0, shift_y=0.0, shift_z=100.0)
+        ts.apply_tomogram_shift_3d(torch.tensor([0.0, 0.0, 100.0]))
 
         # Z shift projects as -Z * sin(tilt_angle) in X
         expected_x = [
@@ -98,7 +98,7 @@ class TestApplyTomogramShift3D:
         """
         ts = self.create_simple_tilt_series([0.0, 45.0])
 
-        ts.apply_tomogram_shift_3d(shift_x=100.0, shift_y=50.0, shift_z=100.0)
+        ts.apply_tomogram_shift_3d(torch.tensor([100.0, 50.0, 100.0]))
 
         # At 0° tilt:
         # - X projects as 100 * cos(0) = 100
@@ -124,7 +124,7 @@ class TestApplyTomogramShift3D:
         ts.tilt_axis_offset_x = torch.tensor([10.0, 20.0])
         ts.tilt_axis_offset_y = torch.tensor([5.0, 15.0])
 
-        ts.apply_tomogram_shift_3d(shift_x=100.0, shift_y=50.0, shift_z=0.0)
+        ts.apply_tomogram_shift_3d(torch.tensor([100.0, 50.0, 0.0]))
 
         # At 0°: X = 10 + 100, Y = 5 + 50
         assert abs(ts.tilt_axis_offset_x[0].item() - 110.0) < 0.01
@@ -153,7 +153,7 @@ class TestApplyTomogramShift3D:
         ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
         ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
 
-        ts.apply_tomogram_shift_3d(shift_x=100.0, shift_y=0.0, shift_z=0.0)
+        ts.apply_tomogram_shift_3d(torch.tensor([100.0, 0.0, 0.0]))
 
         # With 90° tilt axis rotation, specimen X projects to image +Y
         # and attenuates with cos(tilt_angle)
@@ -177,19 +177,41 @@ class TestApplyTomogramShift3D:
         ts2 = self.create_simple_tilt_series([-30.0, 0.0, 30.0])
 
         # Apply 3D shift with Z=0
-        ts1.apply_tomogram_shift_3d(shift_x=100.0, shift_y=50.0, shift_z=0.0)
+        ts1.apply_tomogram_shift_3d(torch.tensor([100.0, 50.0, 0.0]))
 
         # Apply 2D shift at 0° tilt and propagate
         ts2.apply_tilt_shift_and_propagate(
             source_tilt_id=1,  # 0° tilt
-            shift_x=100.0,
-            shift_y=50.0,
+            shift=torch.tensor([100.0, 50.0]),
             propagate_to="both"
         )
 
         # Results should be identical
         assert torch.allclose(ts1.tilt_axis_offset_x, ts2.tilt_axis_offset_x, atol=0.01)
         assert torch.allclose(ts1.tilt_axis_offset_y, ts2.tilt_axis_offset_y, atol=0.01)
+
+    def test_gradient_flow(self):
+        """
+        Test that gradients flow back through the shift tensor.
+        """
+        ts = self.create_simple_tilt_series([-30.0, 0.0, 30.0])
+
+        # Create shift tensor with requires_grad
+        shift = torch.tensor([100.0, 50.0, 25.0], requires_grad=True)
+
+        ts.apply_tomogram_shift_3d(shift)
+
+        # Compute some loss from the offsets
+        loss = ts.tilt_axis_offset_x.sum() + ts.tilt_axis_offset_y.sum()
+
+        # Backpropagate
+        loss.backward()
+
+        # Verify gradients exist and are non-zero
+        assert shift.grad is not None, "Gradients should flow back to shift tensor"
+        assert shift.grad[0].item() != 0.0, "X gradient should be non-zero"
+        assert shift.grad[1].item() != 0.0, "Y gradient should be non-zero"
+        assert shift.grad[2].item() != 0.0, "Z gradient should be non-zero (projects to X)"
 
 
 if __name__ == "__main__":
