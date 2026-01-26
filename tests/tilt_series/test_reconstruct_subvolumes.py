@@ -165,12 +165,16 @@ class TestReconstructSubvolumes:
         # Single coordinate: (3,)
         coord = torch.tensor([50.0, 50.0, 25.0])
 
+        # Use same oversampling for both calls (defaults differ: _single uses 2.0, base uses 1.0)
+        oversampling = 2.0
+
         result = ts.reconstruct_subvolumes_single(
             tilt_data=tilt_data,
             coords=coord,
             pixel_size=10.0,
             size=32,
-            apply_ctf=False
+            apply_ctf=False,
+            oversampling=oversampling
         )
 
         # Should return one reconstruction: (32, 32, 32)
@@ -179,16 +183,17 @@ class TestReconstructSubvolumes:
         # All results should be finite
         assert torch.all(torch.isfinite(result))
 
-        # Compare with manual replication
-        coords_manual = coord.unsqueeze(0).unsqueeze(0).expand(1, 3, 3)  # (1, 3, 3)
+        # Compare with manual replication (must match what reconstruct_subvolumes_single does)
+        coords_manual = coord.unsqueeze(-2).expand(ts.n_tilts, 3)  # (n_tilts, 3)
         result_manual = ts.reconstruct_subvolumes(
             tilt_data=tilt_data,
             coords=coords_manual,
             pixel_size=10.0,
             size=32,
-            apply_ctf=False
+            apply_ctf=False,
+            oversampling=oversampling
         )
-        assert torch.allclose(result, result_manual.squeeze(0), atol=1e-5)
+        assert torch.allclose(result, result_manual, atol=1e-5)
 
     def test_batched_convenience_method(self):
         """Test convenience method with batched coordinates"""

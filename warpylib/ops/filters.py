@@ -7,11 +7,13 @@ to 2D and 3D data in real or Fourier space.
 
 import torch
 from typing import Optional
+from functools import lru_cache
 
-
+@lru_cache(maxsize=2)
 def get_sinc2_correction(
     size: int | tuple[int, int] | tuple[int, int, int],
-    oversampling: float = 1.0
+    oversampling: float = 1.0,
+    device: Optional[torch.device] = None
 ) -> torch.Tensor:
     """
     Create a 2D or 3D volume with sinc^2 interpolation correction values.
@@ -69,7 +71,7 @@ def get_sinc2_correction(
     # Range: -0.5 to 0.5 (DC at center, Nyquist at edges)
     coords = []
     for dim_size in dims:
-        coord = (torch.arange(dim_size, dtype=torch.float32) - dim_size // 2) / dim_size
+        coord = (torch.arange(dim_size, dtype=torch.float32, device=device) - dim_size // 2) / dim_size
         coords.append(coord)
 
     # Create meshgrid based on dimensionality
@@ -87,11 +89,7 @@ def get_sinc2_correction(
         r = r / oversampling
 
     # Compute sinc^2(π*r)
-    arg = torch.pi * r
-    # Handle sinc(0) = 1
-    correction = torch.ones_like(r)
-    mask = r != 0
-    correction[mask] = (torch.sin(arg[mask]) / arg[mask]) ** 2
+    correction = 1.0 / torch.clamp(torch.sinc(r) ** 2, min=1e-6)
 
     return correction
 

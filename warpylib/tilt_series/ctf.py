@@ -148,9 +148,18 @@ def get_ctfs_for_particles(
             dose_weight = ts.grid_dose_weights.get_interpolated(dose_coords)
 
         # Get location weighting: (n_particles * n_tilts,)
-        location_coords_flat = location_coords.reshape(-1, 3)
-        location_weight = ts.grid_location_weights.get_interpolated(location_coords_flat)
-        location_weight = location_weight.reshape(n_particles, ts.n_tilts)
+        grid_is_trivial = all(d == 1 for d in ts.grid_location_weights.dimensions)
+        if grid_is_trivial:
+            location_weight = torch.ones((n_particles, ts.n_tilts), dtype=torch.float32, device=device)
+            location_bfac = torch.zeros((n_particles, ts.n_tilts), dtype=torch.float32, device=device)
+        else:
+            location_coords_flat = location_coords.reshape(-1, 3)
+            location_weight = ts.grid_location_weights.get_interpolated(location_coords_flat)
+            location_weight = location_weight.reshape(n_particles, ts.n_tilts)
+
+            # Get location B-factor: (n_particles * n_tilts,)
+            location_bfac = ts.grid_location_bfacs.get_interpolated(location_coords_flat)
+            location_bfac = location_bfac.reshape(n_particles, ts.n_tilts)
 
         # Combine weights: (n_particles, n_tilts)
         scale = dose_weight.unsqueeze(0) * location_weight
@@ -168,10 +177,6 @@ def get_ctfs_for_particles(
         else:
             dose_bfac = ts.grid_dose_bfacs.get_interpolated(dose_coords)
             dose_bfac = torch.minimum(dose_bfac, -ts.dose * 3)
-
-        # Get location B-factor: (n_particles * n_tilts,)
-        location_bfac = ts.grid_location_bfacs.get_interpolated(location_coords_flat)
-        location_bfac = location_bfac.reshape(n_particles, ts.n_tilts)
 
         # Combine B-factors: (n_particles, n_tilts)
         bfactor = dose_bfac.unsqueeze(0) + location_bfac

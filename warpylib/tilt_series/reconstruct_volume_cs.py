@@ -92,6 +92,8 @@ def reconstruct_full_cs(
     learning_rate: float = 1e-4,
     tilt_batch_size: int = 4,
     debug_output_dir: Optional[str] = None,
+    ctf_ignore_below_res: Optional[float] = None,
+    ctf_ignore_transition_res: Optional[float] = None,
 ) -> torch.Tensor:
     """
     Reconstruct tomogram using real-space gradient optimization.
@@ -122,6 +124,10 @@ def reconstruct_full_cs(
         tilt_batch_size: Number of tilts to process per iteration (default: 4)
         debug_output_dir: Optional directory to write intermediate reconstructions
                           after each iteration (default: None)
+        ctf_ignore_below_res: Resolution in Angstroms below which CTF is fully ignored (set to 1).
+                              Must be greater than ctf_ignore_transition_res. (default: None)
+        ctf_ignore_transition_res: Resolution in Angstroms at which CTF is fully applied.
+                                   Required when ctf_ignore_below_res is set. (default: None)
 
     Returns:
         Reconstructed tomogram, shape (Z, Y, X) in pixels
@@ -168,8 +174,7 @@ def reconstruct_full_cs(
             tilt_data=tilt_data,
             normalize=normalize,
             invert=invert,
-            subvolume_size=64,
-            subvolume_padding=2.0
+            subvolume_size=64 * 2
         )
 
         # Step 3: Upsample reconstruction by 2x
@@ -196,7 +201,9 @@ def reconstruct_full_cs(
         # Shape: (n_tilts, H, W//2+1)
         ctf_2d = ctfs.get_2d(
             size=(tilt_data_processed.shape[1], tilt_data_processed.shape[2]),
-            device=device
+            device=device,
+            ignore_below_res=ctf_ignore_below_res,
+            ignore_transition_res=ctf_ignore_transition_res,
         )
         print(f"CTF patterns shape: {ctf_2d.shape}")
 
@@ -217,7 +224,9 @@ def reconstruct_full_cs(
         )
         ctf_2d = ctfs.get_2d(
             size=(tilt_data_processed.shape[1], tilt_data_processed.shape[2]),
-            device=device
+            device=device,
+            ignore_below_res=ctf_ignore_below_res,
+            ignore_transition_res=ctf_ignore_transition_res,
         )
 
         # Phase-flip CTFs for forward model

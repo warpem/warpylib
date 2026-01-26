@@ -113,7 +113,7 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
 
         plane_normal_str = root.get("PlaneNormal")
         if plane_normal_str:
-            values = [float(x) for x in plane_normal_str.strip("()").split(",")]
+            values = [float(x) for x in plane_normal_str.strip('()').split(",")]
             ts.plane_normal = torch.tensor(values, dtype=torch.float32)
 
         level_x = root.get("LevelAngleX")
@@ -136,10 +136,20 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
         mag_correction = root.get("MagnificationCorrection")
         if mag_correction:
             # Parse as Matrix2 (4 values)
-            values = [float(x.strip()) for x in mag_correction.strip("()").split(",")]
+            values = [float(x.strip()) for x in mag_correction.split(",")]
             if len(values) == 4:
                 ts.magnification_correction = torch.tensor([[values[0], values[1]],
                                                            [values[2], values[3]]], dtype=torch.float32)
+
+        volume_dims = root.get("VolumeDimensionsAngstrom")
+        if volume_dims:
+            values = [float(x) for x in volume_dims.split(",")]
+            ts.volume_dimensions_physical = torch.tensor(values, dtype=torch.float32)
+
+        image_dims = root.get("ImageDimensionsAngstrom")
+        if image_dims:
+            values = [float(x) for x in image_dims.split(",")]
+            ts.image_dimensions_physical = torch.tensor(values, dtype=torch.float32)
 
         unselect_filter = root.get("UnselectFilter")
         if unselect_filter:
@@ -290,7 +300,7 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
         return
 
 
-def save_meta(ts: "TiltSeries", xml_path: str) -> None:
+def save_meta(ts: "TiltSeries", xml_path: str = None) -> None:
     """
     Save metadata to XML file.
 
@@ -298,6 +308,10 @@ def save_meta(ts: "TiltSeries", xml_path: str) -> None:
         ts: TiltSeries instance to save
         xml_path: Path to XML file
     """
+
+    if xml_path is None:
+        xml_path = ts.xml_path
+
     # Create parent directory if needed
     Path(xml_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -309,7 +323,7 @@ def save_meta(ts: "TiltSeries", xml_path: str) -> None:
 
     # Save geometry attributes
     root.set("AreAnglesInverted", str(ts.are_angles_inverted))
-    root.set("PlaneNormal", f"({ts.plane_normal[0]:.9g}, {ts.plane_normal[1]:.9g}, {ts.plane_normal[2]:.9g})")
+    root.set("PlaneNormal", f"{ts.plane_normal[0]:.9g}, {ts.plane_normal[1]:.9g}, {ts.plane_normal[2]:.9g}")
     root.set("LevelAngleX", f"{ts.level_angle_x:.9g}")
     root.set("LevelAngleY", f"{ts.level_angle_y:.9g}")
 
@@ -320,6 +334,11 @@ def save_meta(ts: "TiltSeries", xml_path: str) -> None:
     # Save magnification correction as Matrix2 (4 values)
     mag = ts.magnification_correction
     root.set("MagnificationCorrection", f"{mag[0,0]:.9g}, {mag[0,1]:.9g}, {mag[1,0]:.9g}, {mag[1,1]:.9g}")
+
+    root.set("VolumeDimensionsAngstrom",
+             f"{ts.volume_dimensions_physical[0]:.9g}, {ts.volume_dimensions_physical[1]:.9g}, {ts.volume_dimensions_physical[2]:.9g}")
+    root.set("ImageDimensionsAngstrom",
+             f"{ts.image_dimensions_physical[0]:.9g}, {ts.image_dimensions_physical[1]:.9g}")
 
     root.set("UnselectFilter", str(ts.unselect_filter))
     if ts.unselect_manual is not None:

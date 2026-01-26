@@ -11,6 +11,7 @@ This implementation supports:
 - Full API compliance with torch-cubic-spline-grids
 """
 
+from functools import lru_cache
 from typing import Callable, Optional, Tuple, Union
 import einops
 import torch
@@ -27,12 +28,10 @@ EINSPLINE_BASIS_MATRIX = torch.tensor([
 ], dtype=torch.float32)
 
 
+@lru_cache(maxsize=10000)
 def _build_1d_system_matrix(M: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
     """
-    Build the (M+2)x(M+2) system matrix for 1D interpolating B-spline.
-
-    This matrix is the same for all channels and data values, depending only on M.
-    Can be cached and reused.
+    Build and cache the (M+2)x(M+2) system matrix for 1D interpolating B-spline.
 
     Args:
         M: Number of data points
@@ -42,28 +41,23 @@ def _build_1d_system_matrix(M: int, dtype: torch.dtype, device: torch.device) ->
     Returns:
         A: (M+2, M+2) system matrix
     """
-    # Compute grid spacing (assuming grid covers [0, 1])
     delta = 1.0 / (M - 1)
     delta_inv_sq = (1.0 / delta) ** 2
 
-    # Build system matrix A: (M+2) x (M+2)
     A = torch.zeros(M + 2, M + 2, dtype=dtype, device=device)
 
     # Row 0: Left boundary condition (second derivative = 0)
-    # c_0 - 2*c_1 + c_2 = 0
     A[0, 0] = delta_inv_sq
     A[0, 1] = -2.0 * delta_inv_sq
     A[0, 2] = delta_inv_sq
 
-    # Rows 1 to M: Interpolation equations
-    # (1/6)*c_{i-1} + (2/3)*c_i + (1/6)*c_{i+1} = data[i-1]
-    for i in range(1, M + 1):
-        A[i, i - 1] = 1.0 / 6.0
-        A[i, i] = 2.0 / 3.0
-        A[i, i + 1] = 1.0 / 6.0
+    # Rows 1 to M: Interpolation equations (vectorized)
+    diag_indices = torch.arange(1, M + 1, device=device)
+    A[diag_indices, diag_indices - 1] = 1.0 / 6.0
+    A[diag_indices, diag_indices] = 2.0 / 3.0
+    A[diag_indices, diag_indices + 1] = 1.0 / 6.0
 
     # Row M+1: Right boundary condition (second derivative = 0)
-    # c_{M-1} - 2*c_M + c_{M+1} = 0
     A[M + 1, M - 1] = delta_inv_sq
     A[M + 1, M] = -2.0 * delta_inv_sq
     A[M + 1, M + 1] = delta_inv_sq
@@ -102,17 +96,13 @@ def find_coefs_1d(
     # Build system matrix (same for all channels)
     A = _build_1d_system_matrix(M, dtype=data.dtype, device=data.device)
 
-    # Solve for each channel
-    coefs = torch.zeros(C, M + 2, dtype=data.dtype, device=data.device)
-    for c in range(C):
-        # Build RHS vector
-        b = torch.zeros(M + 2, dtype=data.dtype, device=data.device)
-        b[0] = 0.0  # Left boundary condition RHS
-        b[1:M+1] = data[c]  # Interpolation equations RHS
-        b[M+1] = 0.0  # Right boundary condition RHS
+    # Build RHS matrix for all channels at once: (C, M+2)
+    B = torch.zeros(C, M + 2, dtype=data.dtype, device=data.device)
+    B[:, 1:M+1] = data  # Interpolation equations RHS (boundaries stay 0)
 
-        # Solve Ac = b
-        coefs[c] = torch.linalg.solve(A, b)
+    # Batched solve: A is (M+2, M+2), B.T is (M+2, C)
+    # Result is (M+2, C), transpose to (C, M+2)
+    coefs = torch.linalg.solve(A, B.T).T
 
     if squeeze_output:
         coefs = coefs.squeeze(0)
@@ -126,9 +116,9 @@ def find_coefs_2d(
     """
     Find B-spline coefficients for 2D data with natural boundary conditions.
 
-    Uses separable approach:
-    1. Solve 1D problems along X-direction for each Y row
-    2. Solve 1D problems along Y-direction for each X column
+    Uses separable approach with batched solves:
+    1. Solve 1D problems along X-direction for all (C, Y) positions at once
+    2. Solve 1D problems along Y-direction for all (C, X) positions at once
 
     Args:
         data: (C, Mx, My) data values to interpolate
@@ -144,39 +134,33 @@ def find_coefs_2d(
 
     C, Mx, My = data.shape
 
-    # Build system matrices (reused for all channels and rows/columns)
+    # Build system matrices (reused for all solves)
     Ax = _build_1d_system_matrix(Mx, dtype=data.dtype, device=data.device)
     Ay = _build_1d_system_matrix(My, dtype=data.dtype, device=data.device)
 
-    # Step 1: Solve along X-direction for each Y row
-    # This expands Mx -> Mx+2 while keeping My unchanged
-    coefs_x = torch.zeros(C, Mx + 2, My, dtype=data.dtype, device=data.device)
+    # Step 1: Solve along X-direction for all (C, Y) positions at once
+    # Reshape data: (C, Mx, My) -> (C*My, Mx)
+    data_flat = data.permute(0, 2, 1).reshape(-1, Mx)  # (C*My, Mx)
 
-    for c in range(C):
-        for j in range(My):
-            # Extract row: data[c, :, j] is (Mx,)
-            b = torch.zeros(Mx + 2, dtype=data.dtype, device=data.device)
-            b[0] = 0.0
-            b[1:Mx+1] = data[c, :, j]
-            b[Mx+1] = 0.0
+    # Build RHS matrix: (C*My, Mx+2)
+    B_x = torch.zeros(data_flat.shape[0], Mx + 2, dtype=data.dtype, device=data.device)
+    B_x[:, 1:Mx+1] = data_flat
 
-            # Solve and store
-            coefs_x[c, :, j] = torch.linalg.solve(Ax, b)
+    # Batched solve: Ax is (Mx+2, Mx+2), B_x.T is (Mx+2, C*My)
+    coefs_x_flat = torch.linalg.solve(Ax, B_x.T).T  # (C*My, Mx+2)
+    coefs_x = coefs_x_flat.reshape(C, My, Mx + 2).permute(0, 2, 1)  # (C, Mx+2, My)
 
-    # Step 2: Solve along Y-direction for each X column
-    # This expands My -> My+2, final shape: (C, Mx+2, My+2)
-    coefs = torch.zeros(C, Mx + 2, My + 2, dtype=data.dtype, device=data.device)
+    # Step 2: Solve along Y-direction for all (C, X) positions at once
+    # Reshape: (C, Mx+2, My) -> (C*(Mx+2), My)
+    coefs_x_flat = coefs_x.reshape(-1, My)  # (C*(Mx+2), My)
 
-    for c in range(C):
-        for i in range(Mx + 2):
-            # Extract column: coefs_x[c, i, :] is (My,)
-            b = torch.zeros(My + 2, dtype=data.dtype, device=data.device)
-            b[0] = 0.0
-            b[1:My+1] = coefs_x[c, i, :]
-            b[My+1] = 0.0
+    # Build RHS matrix: (C*(Mx+2), My+2)
+    B_y = torch.zeros(coefs_x_flat.shape[0], My + 2, dtype=data.dtype, device=data.device)
+    B_y[:, 1:My+1] = coefs_x_flat
 
-            # Solve and store
-            coefs[c, i, :] = torch.linalg.solve(Ay, b)
+    # Batched solve
+    coefs_flat = torch.linalg.solve(Ay, B_y.T).T  # (C*(Mx+2), My+2)
+    coefs = coefs_flat.reshape(C, Mx + 2, My + 2)
 
     if squeeze_output:
         coefs = coefs.squeeze(0)
@@ -213,6 +197,7 @@ def interpolate_grid_1d(
 
     C, M_plus_2 = data.shape
     M = M_plus_2 - 2
+    B = u.shape[0]
 
     # Get basis matrix on correct device
     basis_matrix = EINSPLINE_BASIS_MATRIX.to(device=data.device, dtype=data.dtype)
@@ -222,49 +207,38 @@ def interpolate_grid_1d(
     u_norm = u * (M - 1)
 
     # Find grid cell and local coordinate
-    # Handle boundary cases like einspline's split_fraction
     i = torch.floor(u_norm).long()
     t = u_norm - i.float()
 
     # Handle out-of-bounds cases
-    # if u < 0: i=0, t=u
     mask_low = u_norm < 0
     i = torch.where(mask_low, torch.zeros_like(i), i)
     t = torch.where(mask_low, u_norm, t)
 
-    # if u >= M-2: i=M-2, t=u-(M-2)
     mask_high = u_norm >= M - 2
     i = torch.where(mask_high, torch.full_like(i, M - 2), i)
     t = torch.where(mask_high, u_norm - (M - 2), t)
 
-    # Build power vector [t^3, t^2, t, 1]
-    t_powers = torch.stack([t**3, t**2, t, torch.ones_like(t)], dim=1)  # (B, 4)
+    # Build power vector [t^3, t^2, t, 1]: (B, 4)
+    t_powers = torch.stack([t**3, t**2, t, torch.ones_like(t)], dim=1)
 
-    # Evaluate for each channel
-    B = u.shape[0]
-    values = torch.zeros(B, C, dtype=data.dtype, device=data.device)
+    # Compute basis functions: (4, B)
+    basis_vals = torch.matmul(basis_matrix, t_powers.T)
 
-    for c in range(C):
-        # Extract 4 control points for each query point
-        control_points = torch.stack([
-            data[c, i],
-            data[c, i + 1],
-            data[c, i + 2],
-            data[c, i + 3]
-        ], dim=1)  # (B, 4)
+    # Extract 4 control points for each query point across all channels
+    # Use advanced indexing: data[:, i+offset] for offset in 0..3
+    # Build index tensor: (4,) offsets + (B,) indices -> broadcast to (4, B)
+    offsets = torch.arange(4, device=data.device)
+    indices = i.unsqueeze(0) + offsets.unsqueeze(1)  # (4, B)
 
-        # Einspline evaluation formula:
-        # result = sum_j coef[i+j] * (matrix_row_j @ [t^3, t^2, t, 1])
+    # Gather control points: data is (C, M+2), indices is (4, B)
+    # Result: (C, 4, B)
+    control_points = data[:, indices]  # (C, 4, B)
 
-        # Compute basis functions: matrix @ t_powers.T gives (4, B)
-        # Each row is one basis function evaluated at all B points
-        basis_vals = torch.matmul(basis_matrix, t_powers.T)  # (4, B)
-
-        # Now compute weighted sum: control_points^T @ basis_vals
-        # control_points: (B, 4) -> transpose to (4, B)
-        # basis_vals: (4, B)
-        # Result: (B,)
-        values[:, c] = torch.sum(control_points.T * basis_vals, dim=0)
+    # Compute weighted sum: control_points * basis_vals, sum over the 4 dimension
+    # control_points: (C, 4, B), basis_vals: (4, B) -> broadcast to (C, 4, B)
+    # Result: (C, B) -> transpose to (B, C)
+    values = torch.sum(control_points * basis_vals.unsqueeze(0), dim=1).T
 
     return values
 
@@ -275,10 +249,10 @@ def find_coefs_3d(
     """
     Find B-spline coefficients for 3D data with natural boundary conditions.
 
-    Uses separable approach:
-    1. Solve 1D problems along X-direction for each (Y, Z) position
-    2. Solve 1D problems along Y-direction for each (X, Z) position
-    3. Solve 1D problems along Z-direction for each (X, Y) position
+    Uses separable approach with batched solves:
+    1. Solve 1D problems along X-direction for all (C, Y, Z) positions at once
+    2. Solve 1D problems along Y-direction for all (C, X, Z) positions at once
+    3. Solve 1D problems along Z-direction for all (C, X, Y) positions at once
 
     Args:
         data: (C, Mx, My, Mz) data values to interpolate
@@ -294,58 +268,46 @@ def find_coefs_3d(
 
     C, Mx, My, Mz = data.shape
 
-    # Build system matrices (reused for all channels and rows/columns)
+    # Build system matrices (reused for all solves)
     Ax = _build_1d_system_matrix(Mx, dtype=data.dtype, device=data.device)
     Ay = _build_1d_system_matrix(My, dtype=data.dtype, device=data.device)
     Az = _build_1d_system_matrix(Mz, dtype=data.dtype, device=data.device)
 
-    # Step 1: Solve along X-direction for each (Y, Z) position
-    # This expands Mx -> Mx+2 while keeping My, Mz unchanged
-    coefs_x = torch.zeros(C, Mx + 2, My, Mz, dtype=data.dtype, device=data.device)
+    # Step 1: Solve along X-direction for all (C, Y, Z) positions at once
+    # Reshape data: (C, Mx, My, Mz) -> (C*My*Mz, Mx)
+    data_flat = data.permute(0, 2, 3, 1).reshape(-1, Mx)  # (C*My*Mz, Mx)
 
-    for c in range(C):
-        for j in range(My):
-            for k in range(Mz):
-                # Extract line: data[c, :, j, k] is (Mx,)
-                b = torch.zeros(Mx + 2, dtype=data.dtype, device=data.device)
-                b[0] = 0.0
-                b[1:Mx+1] = data[c, :, j, k]
-                b[Mx+1] = 0.0
+    # Build RHS matrix: (C*My*Mz, Mx+2)
+    B_x = torch.zeros(data_flat.shape[0], Mx + 2, dtype=data.dtype, device=data.device)
+    B_x[:, 1:Mx+1] = data_flat
 
-                # Solve and store
-                coefs_x[c, :, j, k] = torch.linalg.solve(Ax, b)
+    # Batched solve: Ax is (Mx+2, Mx+2), B_x.T is (Mx+2, C*My*Mz)
+    coefs_x_flat = torch.linalg.solve(Ax, B_x.T).T  # (C*My*Mz, Mx+2)
+    coefs_x = coefs_x_flat.reshape(C, My, Mz, Mx + 2).permute(0, 3, 1, 2)  # (C, Mx+2, My, Mz)
 
-    # Step 2: Solve along Y-direction for each (X, Z) position
-    # This expands My -> My+2, shape becomes (C, Mx+2, My+2, Mz)
-    coefs_xy = torch.zeros(C, Mx + 2, My + 2, Mz, dtype=data.dtype, device=data.device)
+    # Step 2: Solve along Y-direction for all (C, X, Z) positions at once
+    # Reshape: (C, Mx+2, My, Mz) -> (C*(Mx+2)*Mz, My)
+    coefs_x_flat = coefs_x.permute(0, 1, 3, 2).reshape(-1, My)  # (C*(Mx+2)*Mz, My)
 
-    for c in range(C):
-        for i in range(Mx + 2):
-            for k in range(Mz):
-                # Extract line: coefs_x[c, i, :, k] is (My,)
-                b = torch.zeros(My + 2, dtype=data.dtype, device=data.device)
-                b[0] = 0.0
-                b[1:My+1] = coefs_x[c, i, :, k]
-                b[My+1] = 0.0
+    # Build RHS matrix: (C*(Mx+2)*Mz, My+2)
+    B_y = torch.zeros(coefs_x_flat.shape[0], My + 2, dtype=data.dtype, device=data.device)
+    B_y[:, 1:My+1] = coefs_x_flat
 
-                # Solve and store
-                coefs_xy[c, i, :, k] = torch.linalg.solve(Ay, b)
+    # Batched solve
+    coefs_xy_flat = torch.linalg.solve(Ay, B_y.T).T  # (C*(Mx+2)*Mz, My+2)
+    coefs_xy = coefs_xy_flat.reshape(C, Mx + 2, Mz, My + 2).permute(0, 1, 3, 2)  # (C, Mx+2, My+2, Mz)
 
-    # Step 3: Solve along Z-direction for each (X, Y) position
-    # This expands Mz -> Mz+2, final shape: (C, Mx+2, My+2, Mz+2)
-    coefs = torch.zeros(C, Mx + 2, My + 2, Mz + 2, dtype=data.dtype, device=data.device)
+    # Step 3: Solve along Z-direction for all (C, X, Y) positions at once
+    # Reshape: (C, Mx+2, My+2, Mz) -> (C*(Mx+2)*(My+2), Mz)
+    coefs_xy_flat = coefs_xy.reshape(-1, Mz)  # (C*(Mx+2)*(My+2), Mz)
 
-    for c in range(C):
-        for i in range(Mx + 2):
-            for j in range(My + 2):
-                # Extract line: coefs_xy[c, i, j, :] is (Mz,)
-                b = torch.zeros(Mz + 2, dtype=data.dtype, device=data.device)
-                b[0] = 0.0
-                b[1:Mz+1] = coefs_xy[c, i, j, :]
-                b[Mz+1] = 0.0
+    # Build RHS matrix: (C*(Mx+2)*(My+2), Mz+2)
+    B_z = torch.zeros(coefs_xy_flat.shape[0], Mz + 2, dtype=data.dtype, device=data.device)
+    B_z[:, 1:Mz+1] = coefs_xy_flat
 
-                # Solve and store
-                coefs[c, i, j, :] = torch.linalg.solve(Az, b)
+    # Batched solve
+    coefs_flat = torch.linalg.solve(Az, B_z.T).T  # (C*(Mx+2)*(My+2), Mz+2)
+    coefs = coefs_flat.reshape(C, Mx + 2, My + 2, Mz + 2)
 
     if squeeze_output:
         coefs = coefs.squeeze(0)
@@ -380,6 +342,7 @@ def interpolate_grid_2d(
     C, Mx_plus_2, My_plus_2 = data.shape
     Mx = Mx_plus_2 - 2
     My = My_plus_2 - 2
+    B = u.shape[0]
 
     # Extract x and y coordinates
     ux = u[:, 0]  # (B,)
@@ -418,52 +381,42 @@ def interpolate_grid_2d(
     iy = torch.where(mask_high_y, torch.full_like(iy, My - 2), iy)
     ty = torch.where(mask_high_y, uy_norm - (My - 2), ty)
 
-    # Build power vectors
-    tx_powers = torch.stack([tx**3, tx**2, tx, torch.ones_like(tx)], dim=1)  # (B, 4)
-    ty_powers = torch.stack([ty**3, ty**2, ty, torch.ones_like(ty)], dim=1)  # (B, 4)
+    # Build power vectors: (B, 4)
+    tx_powers = torch.stack([tx**3, tx**2, tx, torch.ones_like(tx)], dim=1)
+    ty_powers = torch.stack([ty**3, ty**2, ty, torch.ones_like(ty)], dim=1)
 
-    # Compute basis functions
-    basis_x = torch.matmul(basis_matrix, tx_powers.T)  # (4, B)
-    basis_y = torch.matmul(basis_matrix, ty_powers.T)  # (4, B)
+    # Compute basis functions: (4, B)
+    basis_x = torch.matmul(basis_matrix, tx_powers.T)
+    basis_y = torch.matmul(basis_matrix, ty_powers.T)
 
-    # Evaluate for each channel
-    B = u.shape[0]
-    values = torch.zeros(B, C, dtype=data.dtype, device=data.device)
+    # Build index tensors for 4x4 control point extraction
+    offsets = torch.arange(4, device=data.device)
+    # ix_expanded: (4, B), iy_expanded: (4, B)
+    ix_expanded = ix.unsqueeze(0) + offsets.unsqueeze(1)  # (4, B)
+    iy_expanded = iy.unsqueeze(0) + offsets.unsqueeze(1)  # (4, B)
 
-    for c in range(C):
-        # Extract 4x4 control point grid for each query point
-        # We need to stack control points at positions:
-        # [ix+i, iy+j] for i,j in 0..3
+    # Extract 4x4 control points for all channels at once
+    # data: (C, Mx+2, My+2)
+    # We want: control_grid[c, i, j, b] = data[c, ix[b]+i, iy[b]+j]
+    # Result shape: (C, 4, 4, B)
+    control_grid = data[:, ix_expanded[:, None, :], iy_expanded[None, :, :]]
+    # This gives (C, 4, 4, B) due to broadcasting
 
-        # For each batch element, we need a (4, 4) grid of control points
-        # Result will be (B, 4, 4)
-        control_grid = torch.zeros(B, 4, 4, dtype=data.dtype, device=data.device)
+    # Apply separable 2D cubic interpolation vectorized across all channels
+    # Step 1: Apply basis in X direction
+    # control_grid: (C, 4, 4, B), basis_x: (4, B)
+    # For each c, j, b: sum over i of control_grid[c, i, j, b] * basis_x[i, b]
+    # Result: (C, 4, B)
+    intermediate = torch.einsum('cijb,ib->cjb', control_grid, basis_x)
 
-        for i in range(4):
-            for j in range(4):
-                control_grid[:, i, j] = data[c, ix + i, iy + j]
+    # Step 2: Apply basis in Y direction
+    # intermediate: (C, 4, B), basis_y: (4, B)
+    # For each c, b: sum over j of intermediate[c, j, b] * basis_y[j, b]
+    # Result: (C, B)
+    values = torch.einsum('cjb,jb->cb', intermediate, basis_y)
 
-        # Apply separable 2D cubic interpolation
-        # First apply basis in X: control_grid (B, 4, 4) @ basis_x (4, B)
-        # We want: for each B, multiply (4, 4) by (4,) to get (4,)
-        # Then multiply result by basis_y
-
-        # Compute intermediate: apply basis_x along first dimension of control_grid
-        # control_grid: (B, 4, 4)
-        # basis_x: (4, B) -> we need (B, 4) for batch matmul
-        # Result after X interpolation: (B, 4)
-        intermediate = torch.zeros(B, 4, dtype=data.dtype, device=data.device)
-        for i in range(4):
-            # control_grid[:, :, i]: (B, 4) - controls in X direction at y offset i
-            # basis_x: (4, B)
-            # We want: for each b, sum over 4 control points weighted by basis_x[:, b]
-            intermediate[:, i] = torch.sum(control_grid[:, :, i] * basis_x.T, dim=1)
-
-        # Apply basis in Y: intermediate (B, 4) @ basis_y
-        # For each b, sum over 4 intermediate values weighted by basis_y[:, b]
-        values[:, c] = torch.sum(intermediate * basis_y.T, dim=1)
-
-    return values
+    # Transpose to (B, C)
+    return values.T
 
 
 def interpolate_grid_3d(
@@ -494,6 +447,7 @@ def interpolate_grid_3d(
     Mx = Mx_plus_2 - 2
     My = My_plus_2 - 2
     Mz = Mz_plus_2 - 2
+    B = u.shape[0]
 
     # Extract x, y, z coordinates
     ux = u[:, 0]  # (B,)
@@ -547,49 +501,57 @@ def interpolate_grid_3d(
     iz = torch.where(mask_high_z, torch.full_like(iz, Mz - 2), iz)
     tz = torch.where(mask_high_z, uz_norm - (Mz - 2), tz)
 
-    # Build power vectors
-    tx_powers = torch.stack([tx**3, tx**2, tx, torch.ones_like(tx)], dim=1)  # (B, 4)
-    ty_powers = torch.stack([ty**3, ty**2, ty, torch.ones_like(ty)], dim=1)  # (B, 4)
-    tz_powers = torch.stack([tz**3, tz**2, tz, torch.ones_like(tz)], dim=1)  # (B, 4)
+    # Build power vectors: (B, 4)
+    tx_powers = torch.stack([tx**3, tx**2, tx, torch.ones_like(tx)], dim=1)
+    ty_powers = torch.stack([ty**3, ty**2, ty, torch.ones_like(ty)], dim=1)
+    tz_powers = torch.stack([tz**3, tz**2, tz, torch.ones_like(tz)], dim=1)
 
-    # Compute basis functions
-    basis_x = torch.matmul(basis_matrix, tx_powers.T)  # (4, B)
-    basis_y = torch.matmul(basis_matrix, ty_powers.T)  # (4, B)
-    basis_z = torch.matmul(basis_matrix, tz_powers.T)  # (4, B)
+    # Compute basis functions: (4, B)
+    basis_x = torch.matmul(basis_matrix, tx_powers.T)
+    basis_y = torch.matmul(basis_matrix, ty_powers.T)
+    basis_z = torch.matmul(basis_matrix, tz_powers.T)
 
-    # Evaluate for each channel
-    B = u.shape[0]
-    values = torch.zeros(B, C, dtype=data.dtype, device=data.device)
+    # Build index tensors for 4x4x4 control point extraction
+    offsets = torch.arange(4, device=data.device)
+    # Each expanded: (4, B)
+    ix_expanded = ix.unsqueeze(0) + offsets.unsqueeze(1)
+    iy_expanded = iy.unsqueeze(0) + offsets.unsqueeze(1)
+    iz_expanded = iz.unsqueeze(0) + offsets.unsqueeze(1)
 
-    for c in range(C):
-        # Extract 4x4x4 control point grid for each query point
-        # We need control points at positions: [ix+i, iy+j, iz+k] for i,j,k in 0..3
-        # Result will be (B, 4, 4, 4)
-        control_grid = torch.zeros(B, 4, 4, 4, dtype=data.dtype, device=data.device)
+    # Extract 4x4x4 control points for all channels at once
+    # data: (C, Mx+2, My+2, Mz+2)
+    # We want: control_grid[c, i, j, k, b] = data[c, ix[b]+i, iy[b]+j, iz[b]+k]
+    # Use advanced indexing with broadcasting
+    # ix_expanded[:, None, None, :] -> (4, 1, 1, B)
+    # iy_expanded[None, :, None, :] -> (1, 4, 1, B)
+    # iz_expanded[None, None, :, :] -> (1, 1, 4, B)
+    control_grid = data[:,
+                        ix_expanded[:, None, None, :],
+                        iy_expanded[None, :, None, :],
+                        iz_expanded[None, None, :, :]]
+    # Result shape: (C, 4, 4, 4, B)
 
-        for i in range(4):
-            for j in range(4):
-                for k in range(4):
-                    control_grid[:, i, j, k] = data[c, ix + i, iy + j, iz + k]
+    # Apply separable 3D cubic interpolation vectorized across all channels
+    # Step 1: Apply basis in X direction
+    # control_grid: (C, 4, 4, 4, B), basis_x: (4, B)
+    # For each c, j, k, b: sum over i of control_grid[c, i, j, k, b] * basis_x[i, b]
+    # Result: (C, 4, 4, B)
+    intermediate_yz = torch.einsum('cijkb,ib->cjkb', control_grid, basis_x)
 
-        # Apply separable 3D cubic interpolation
-        # Step 1: Apply basis in X direction -> (B, 4, 4)
-        intermediate_xy = torch.zeros(B, 4, 4, dtype=data.dtype, device=data.device)
-        for j in range(4):
-            for k in range(4):
-                # control_grid[:, :, j, k]: (B, 4) - controls in X direction at (y, z) offset (j, k)
-                intermediate_xy[:, j, k] = torch.sum(control_grid[:, :, j, k] * basis_x.T, dim=1)
+    # Step 2: Apply basis in Y direction
+    # intermediate_yz: (C, 4, 4, B), basis_y: (4, B)
+    # For each c, k, b: sum over j of intermediate_yz[c, j, k, b] * basis_y[j, b]
+    # Result: (C, 4, B)
+    intermediate_z = torch.einsum('cjkb,jb->ckb', intermediate_yz, basis_y)
 
-        # Step 2: Apply basis in Y direction -> (B, 4)
-        intermediate_z = torch.zeros(B, 4, dtype=data.dtype, device=data.device)
-        for k in range(4):
-            # intermediate_xy[:, :, k]: (B, 4) - intermediate values in Y direction at z offset k
-            intermediate_z[:, k] = torch.sum(intermediate_xy[:, :, k] * basis_y.T, dim=1)
+    # Step 3: Apply basis in Z direction
+    # intermediate_z: (C, 4, B), basis_z: (4, B)
+    # For each c, b: sum over k of intermediate_z[c, k, b] * basis_z[k, b]
+    # Result: (C, B)
+    values = torch.einsum('ckb,kb->cb', intermediate_z, basis_z)
 
-        # Step 3: Apply basis in Z direction -> (B,)
-        values[:, c] = torch.sum(intermediate_z * basis_z.T, dim=1)
-
-    return values
+    # Transpose to (B, C)
+    return values.T
 
 
 def coerce_to_multichannel_grid(grid: torch.Tensor, grid_ndim: int) -> torch.Tensor:

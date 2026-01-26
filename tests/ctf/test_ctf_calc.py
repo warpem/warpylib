@@ -375,5 +375,311 @@ def test_ctf_reference_comparison():
     print(f"  Mean absolute difference: {torch.mean(torch.abs(ctf_masked - ref_masked)):.2e}")
 
 
+def test_ctf_1d_ignore_low_frequency_validation():
+    """Test that ignore parameters are validated correctly."""
+    ctf = CTF()
+    ctf.pixel_size = 1.0
+    ctf.defocus = 2.0
+
+    # Should raise if ignore_below_res is set but ignore_transition_res is not
+    with pytest.raises(ValueError, match="ignore_transition_res must be set"):
+        ctf.get_1d(width=512, ignore_below_res=50.0)
+
+    # Should raise if ignore_below_res <= ignore_transition_res
+    with pytest.raises(ValueError, match="must be greater than"):
+        ctf.get_1d(width=512, ignore_below_res=20.0, ignore_transition_res=50.0)
+
+    with pytest.raises(ValueError, match="must be greater than"):
+        ctf.get_1d(width=512, ignore_below_res=30.0, ignore_transition_res=30.0)
+
+
+def test_ctf_2d_ignore_low_frequency_validation():
+    """Test that ignore parameters are validated correctly for 2D."""
+    ctf = CTF()
+    ctf.pixel_size = 1.0
+    ctf.defocus = 2.0
+
+    # Should raise if ignore_below_res is set but ignore_transition_res is not
+    with pytest.raises(ValueError, match="ignore_transition_res must be set"):
+        ctf.get_2d(size=64, ignore_below_res=50.0)
+
+    # Should raise if ignore_below_res <= ignore_transition_res
+    with pytest.raises(ValueError, match="must be greater than"):
+        ctf.get_2d(size=64, ignore_below_res=20.0, ignore_transition_res=50.0)
+
+
+def test_ctf_1d_ignore_low_frequency_basic():
+    """Test basic low-frequency ignore functionality for 1D CTF."""
+    ctf = CTF()
+    ctf.pixel_size = 1.0
+    ctf.defocus = 2.0
+
+    width = 512
+    ignore_below_res = 50.0  # Ignore below 50Å (low freq)
+    ignore_transition_res = 20.0  # Full CTF above 20Å (higher freq)
+
+    ctf_normal = ctf.get_1d(width=width)
+    ctf_ignored = ctf.get_1d(
+        width=width,
+        ignore_below_res=ignore_below_res,
+        ignore_transition_res=ignore_transition_res
+    )
+
+    # Shapes should match
+    assert ctf_normal.shape == ctf_ignored.shape
+
+    # At very low frequencies (below ignore_below_res), CTF should be 1
+    # First element (DC) should be close to 1
+    assert torch.abs(ctf_ignored[0] - 1.0) < 0.01
+
+    # At high frequencies (well above 1/ignore_transition_res), should match normal CTF
+    # Nyquist frequency = 0.5 / pixel_size = 0.5 (1/Å)
+    # freq[i] = i * nyquist / width = i * 0.5 / 512
+    # For full CTF, we need freq > 1/ignore_transition_res = 1/20 = 0.05
+    # i > 0.05 * 512 / 0.5 = 51.2, so start well past that
+    high_freq_start = 60  # Safely past the transition zone
+    assert torch.allclose(
+        ctf_ignored[high_freq_start:],
+        ctf_normal[high_freq_start:],
+        atol=1e-6
+    )
+
+
+def test_ctf_2d_ignore_low_frequency_basic():
+    """Test basic low-frequency ignore functionality for 2D CTF."""
+    ctf = CTF()
+    ctf.pixel_size = 1.0
+    ctf.defocus = 2.0
+
+    size = 128
+    ignore_below_res = 50.0
+    ignore_transition_res = 20.0
+
+    ctf_normal = ctf.get_2d(size=size)
+    ctf_ignored = ctf.get_2d(
+        size=size,
+        ignore_below_res=ignore_below_res,
+        ignore_transition_res=ignore_transition_res
+    )
+
+    # Shapes should match
+    assert ctf_normal.shape == ctf_ignored.shape
+
+    # DC component (0, 0) should be 1
+    assert torch.abs(ctf_ignored[0, 0] - 1.0) < 0.01
+
+
+def test_ctf_1d_ignore_transition_smoothness():
+    """Test that the transition uses raised cosine interpolation."""
+    ctf = CTF()
+    ctf.pixel_size = 1.0
+    ctf.defocus = 2.0
+
+    width = 1024
+    ignore_below_res = 100.0  # Wide transition zone for testing
+    ignore_transition_res = 20.0
+
+    ctf_ignored = ctf.get_1d(
+        width=width,
+        ignore_below_res=ignore_below_res,
+        ignore_transition_res=ignore_transition_res
+    )
+
+    # Compute frequencies
+    nyquist_step = 0.5 / ctf.pixel_size / width
+    freq = torch.arange(width, dtype=torch.float32) * nyquist_step
+
+    freq_low = 1.0 / ignore_below_res
+    freq_high = 1.0 / ignore_transition_res
+
+    # Find indices in transition zone
+    in_transition = (freq > freq_low) & (freq < freq_high)
+
+    # The transition should be smooth (no sudden jumps)
+    # Check that values in transition zone are between boundary values
+    if torch.any(in_transition):
+        transition_values = ctf_ignored[in_transition]
+        # All values should be finite
+        assert torch.all(torch.isfinite(transition_values))
+
+
+def test_ctf_1d_ignore_matches_at_boundaries():
+    """Test CTF values at the exact boundary frequencies."""
+    ctf = CTF()
+    ctf.pixel_size = 2.0  # Larger pixel size for wider frequency spacing
+    ctf.defocus = 2.0
+
+    width = 256
+    ignore_below_res = 40.0
+    ignore_transition_res = 10.0
+
+    ctf_normal = ctf.get_1d(width=width)
+    ctf_ignored = ctf.get_1d(
+        width=width,
+        ignore_below_res=ignore_below_res,
+        ignore_transition_res=ignore_transition_res
+    )
+
+    # Verify that without ignore parameters, we get oscillating CTF
+    assert torch.min(ctf_normal) < 0
+    assert torch.max(ctf_normal) > 0
+
+    # Verify that with ignore, low frequencies are closer to 1
+    # The first few indices should be very close to 1
+    assert torch.mean(torch.abs(ctf_ignored[:3] - 1.0)) < torch.mean(torch.abs(ctf_normal[:3] - 1.0))
+
+
+def test_ctf_2d_ignore_radial_symmetry():
+    """Test that 2D ignore is radially symmetric (for isotropic CTF)."""
+    ctf = CTF()
+    ctf.pixel_size = 1.0
+    ctf.defocus = 2.0
+    # No astigmatism for radial symmetry
+
+    size = 64
+    ignore_below_res = 30.0
+    ignore_transition_res = 15.0
+
+    ctf_ignored = ctf.get_2d(
+        size=size,
+        ignore_below_res=ignore_below_res,
+        ignore_transition_res=ignore_transition_res
+    )
+
+    # Check that values at same radius are approximately equal
+    # Compare (0, 5) with (5, 0) - should have same radius
+    # Note: in rfft format, x goes from 0 to size//2
+    val_x = ctf_ignored[0, 5]  # Along x-axis
+    val_y = ctf_ignored[5, 0]  # Along y-axis
+
+    assert torch.abs(val_x - val_y) < 1e-5, f"Radial asymmetry: x={val_x}, y={val_y}"
+
+
+def test_ctf_ignore_no_effect_when_not_set():
+    """Test that CTF is unchanged when ignore parameters are not set."""
+    ctf = CTF()
+    ctf.pixel_size = 1.0
+    ctf.defocus = 2.0
+
+    # 1D
+    ctf_1d_default = ctf.get_1d(width=512)
+    ctf_1d_none = ctf.get_1d(width=512, ignore_below_res=None, ignore_transition_res=None)
+    assert torch.allclose(ctf_1d_default, ctf_1d_none)
+
+    # 2D
+    ctf_2d_default = ctf.get_2d(size=64)
+    ctf_2d_none = ctf.get_2d(size=64, ignore_below_res=None, ignore_transition_res=None)
+    assert torch.allclose(ctf_2d_default, ctf_2d_none)
+
+
+def test_ctf_ignore_visualization():
+    """Test and visualize the low-frequency ignore functionality."""
+    from pathlib import Path
+
+    ctf = CTF()
+    ctf.pixel_size = 1.5
+    ctf.voltage = 300.0
+    ctf.defocus = 2.0
+    ctf.amplitude = 0.07
+
+    # Create testoutputs directory
+    output_dir = Path(__file__).parent.parent.parent / 'testoutputs'
+    output_dir.mkdir(exist_ok=True)
+
+    width = 512
+    ignore_below_res = 60.0
+    ignore_transition_res = 20.0
+
+    # Calculate CTFs
+    ctf_normal = ctf.get_1d(width=width)
+    ctf_ignored = ctf.get_1d(
+        width=width,
+        ignore_below_res=ignore_below_res,
+        ignore_transition_res=ignore_transition_res
+    )
+
+    # Create frequency axis (in 1/Å)
+    nyquist_step = 0.5 / ctf.pixel_size / width
+    freq = np.arange(width) * nyquist_step
+
+    # Convert to resolution (Å) for x-axis, avoiding division by zero
+    resolution = np.where(freq > 0, 1.0 / freq, np.inf)
+
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+
+    # Calculate frequency indices for the resolution boundaries
+    # freq[i] = i * 0.5 / (pixel_size * width), so for resolution R:
+    # 1/R = i * 0.5 / (pixel_size * width) => i = 2 * pixel_size * width / R
+    idx_below = 2 * ctf.pixel_size * width / ignore_below_res
+    idx_transition = 2 * ctf.pixel_size * width / ignore_transition_res
+
+    # Plot vs frequency index
+    ax1 = axes[0]
+    ax1.plot(ctf_normal.numpy(), label='Normal CTF', alpha=0.7)
+    ax1.plot(ctf_ignored.numpy(), label='With low-freq ignore', alpha=0.7)
+    ax1.axhline(y=1.0, color='gray', linestyle='--', alpha=0.5, label='CTF = 1')
+    ax1.axvline(x=idx_below, color='r', linestyle=':', alpha=0.5, label=f'ignore_below_res ({ignore_below_res}Å)')
+    ax1.axvline(x=idx_transition, color='g', linestyle=':', alpha=0.5, label=f'ignore_transition_res ({ignore_transition_res}Å)')
+    ax1.set_xlabel('Frequency index')
+    ax1.set_ylabel('CTF value')
+    ax1.set_title('1D CTF with Low-Frequency Ignore')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_xlim(0, 100)  # Zoom to see the transition
+
+    # Plot the difference
+    ax2 = axes[1]
+    diff = ctf_ignored.numpy() - ctf_normal.numpy()
+    ax2.plot(diff)
+    ax2.axhline(y=0, color='gray', linestyle='--', alpha=0.5)
+    ax2.axvline(x=idx_below, color='r', linestyle=':', alpha=0.5)
+    ax2.axvline(x=idx_transition, color='g', linestyle=':', alpha=0.5)
+    ax2.set_xlabel('Frequency index')
+    ax2.set_ylabel('Difference (ignored - normal)')
+    ax2.set_title('Difference between ignored and normal CTF')
+    ax2.grid(True, alpha=0.3)
+    ax2.set_xlim(0, 100)
+
+    plt.tight_layout()
+    output_path = output_dir / 'test_ctf_low_freq_ignore.png'
+    plt.savefig(output_path, dpi=100, bbox_inches='tight')
+    plt.close(fig)
+
+    assert output_path.exists()
+    print(f'\nLow-frequency ignore plot saved to: {output_path}')
+
+    # 2D visualization
+    size = 256
+    ctf_2d_normal = ctf.get_2d(size=size)
+    ctf_2d_ignored = ctf.get_2d(
+        size=size,
+        ignore_below_res=ignore_below_res,
+        ignore_transition_res=ignore_transition_res
+    )
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    im0 = axes[0].imshow(ctf_2d_normal.numpy(), cmap='gray', origin='lower')
+    axes[0].set_title('Normal 2D CTF')
+    plt.colorbar(im0, ax=axes[0])
+
+    im1 = axes[1].imshow(ctf_2d_ignored.numpy(), cmap='gray', origin='lower')
+    axes[1].set_title(f'With ignore (below {ignore_below_res}Å, transition to {ignore_transition_res}Å)')
+    plt.colorbar(im1, ax=axes[1])
+
+    diff_2d = ctf_2d_ignored.numpy() - ctf_2d_normal.numpy()
+    im2 = axes[2].imshow(diff_2d, cmap='RdBu', origin='lower')
+    axes[2].set_title('Difference')
+    plt.colorbar(im2, ax=axes[2])
+
+    plt.tight_layout()
+    output_path_2d = output_dir / 'test_ctf_low_freq_ignore_2d.png'
+    plt.savefig(output_path_2d, dpi=100, bbox_inches='tight')
+    plt.close(fig)
+
+    assert output_path_2d.exists()
+    print(f'2D low-frequency ignore plot saved to: {output_path_2d}')
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -12,7 +12,7 @@ import torch_projectors
 import mrcfile
 from typing import Optional
 from ..euler import euler_to_matrix, rotate_x
-from ..ops import get_sinc2_correction, resize_ft
+from ..ops import resize_ft
 
 
 def reconstruct_subvolume_ctfs(
@@ -23,9 +23,10 @@ def reconstruct_subvolume_ctfs(
     oversampling: float = 1.0,
     apply_ctf: bool = True,
     ctf_weighted: bool = True,
-    padding_mode: str = 'zeros',
     tilt_ids: Optional[torch.Tensor] = None,
     angles: Optional[torch.Tensor] = None,
+    ctf_ignore_below_res: Optional[float] = None,
+    ctf_ignore_transition_res: Optional[float] = None,
 ) -> torch.Tensor:
     """
     Reconstruct CTF volumes at specified 3D positions using weighted backprojection.
@@ -46,12 +47,15 @@ def reconstruct_subvolume_ctfs(
                      sampling of high-frequency CTF oscillations (default: 1.0)
         apply_ctf: Whether to use actual CTF or flat weighting (default: True)
         ctf_weighted: Whether to apply dose/location weighting to CTFs (default: True)
-        padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
         tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
                   If None, all tilts are used. (default: None)
         angles: Optional Euler angles in radians (ZYZ convention) to change reconstruction orientation,
                 shape (..., n_tilts, 3). If provided, these rotations are applied to change the
                 coordinate system of the reconstruction. (default: None)
+        ctf_ignore_below_res: Resolution in Angstroms below which CTF is fully ignored (set to 1).
+                              Must be greater than ctf_ignore_transition_res. (default: None)
+        ctf_ignore_transition_res: Resolution in Angstroms at which CTF is fully applied.
+                                   Required when ctf_ignore_below_res is set. (default: None)
 
     Returns:
         CTF volumes in Fourier space (rfft format), shape (..., size, size, size//2+1)
@@ -86,7 +90,12 @@ def reconstruct_subvolume_ctfs(
         )
 
         # Evaluate 2D CTFs in Fourier space (..., n_tilts, ctf_patch_size, ctf_patch_size//2+1)
-        ctf_2d = ctfs.get_2d(size=ctf_patch_size, device=coords.device)
+        ctf_2d = ctfs.get_2d(
+            size=ctf_patch_size,
+            device=coords.device,
+            ignore_below_res=ctf_ignore_below_res,
+            ignore_transition_res=ctf_ignore_transition_res,
+        )
     else:
         # Get CTFs for particles (..., n_tilts) that don't have any oscillations, just weights (if desired)
         ctfs = ts.get_ctfs_for_particles(
@@ -98,7 +107,12 @@ def reconstruct_subvolume_ctfs(
         ctfs = ctfs.make_flat()
 
         # Evaluate 2D CTFs in Fourier space (..., n_tilts, ctf_patch_size, ctf_patch_size//2+1)
-        ctf_2d = ctfs.get_2d(size=ctf_patch_size, device=coords.device)
+        ctf_2d = ctfs.get_2d(
+            size=ctf_patch_size,
+            device=coords.device,
+            ignore_below_res=ctf_ignore_below_res,
+            ignore_transition_res=ctf_ignore_transition_res,
+        )
 
     weights_2d = torch.abs(ctf_2d)
     ctf_2d = ctf_2d ** 2
@@ -191,9 +205,10 @@ def reconstruct_subvolume_ctfs_single(
     oversampling: float = 1.0,
     apply_ctf: bool = True,
     ctf_weighted: bool = True,
-    padding_mode: str = 'zeros',
     tilt_ids: Optional[torch.Tensor] = None,
     angles: Optional[torch.Tensor] = None,
+    ctf_ignore_below_res: Optional[float] = None,
+    ctf_ignore_transition_res: Optional[float] = None,
 ) -> torch.Tensor:
     """
     Reconstruct CTF volumes at static 3D positions (same across all tilts).
@@ -212,12 +227,15 @@ def reconstruct_subvolume_ctfs_single(
                      sampling of high-frequency CTF oscillations (default: 1.0)
         apply_ctf: Whether to use actual CTF or flat weighting (default: True)
         ctf_weighted: Whether to apply dose/location weighting to CTFs (default: True)
-        padding_mode: Padding mode for grid_sample ('zeros', 'border', 'reflection')
         tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
                   If None, all tilts are used. (default: None)
         angles: Optional Euler angles in radians (ZYZ convention) to change reconstruction orientation,
                 shape (..., 3). If provided, these rotations are applied to change the
                 coordinate system of the reconstruction. (default: None)
+        ctf_ignore_below_res: Resolution in Angstroms below which CTF is fully ignored (set to 1).
+                              Must be greater than ctf_ignore_transition_res. (default: None)
+        ctf_ignore_transition_res: Resolution in Angstroms at which CTF is fully applied.
+                                   Required when ctf_ignore_below_res is set. (default: None)
 
     Returns:
         CTF volumes in Fourier space (rfft format), shape (..., size, size, size//2+1)
@@ -249,7 +267,8 @@ def reconstruct_subvolume_ctfs_single(
         oversampling=oversampling,
         apply_ctf=apply_ctf,
         ctf_weighted=ctf_weighted,
-        padding_mode=padding_mode,
         tilt_ids=tilt_ids,
-        angles=per_tilt_angles
+        angles=per_tilt_angles,
+        ctf_ignore_below_res=ctf_ignore_below_res,
+        ctf_ignore_transition_res=ctf_ignore_transition_res,
     )

@@ -20,7 +20,8 @@ def reconstruct_full(
     pixel_size: float,
     volume_dimensions_physical: tuple,
     subvolume_size: int = 64,
-    subvolume_oversampling: float = 2.0,
+    subvolume_oversampling: int = 2,
+    reconstruction_oversampling: int = 1,
     normalize: bool = True,
     invert: bool = False,
     apply_ctf: bool = True,
@@ -28,7 +29,10 @@ def reconstruct_full(
     correct_attenuation: bool = True,
     batch_size: int = 8,
     tilt_ids: Optional[torch.Tensor] = None,
-    tile_processing_fn: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    tile_processing_fn: Optional[Callable[[torch.Tensor, Optional[torch.Tensor]], torch.Tensor]] = None,
+    ctf_ignore_below_res: Optional[float] = None,
+    ctf_ignore_transition_res: Optional[float] = None,
+    additional_tilt_data: torch.Tensor = None,
 ) -> torch.Tensor:
     """
     Reconstruct full tomogram using tiled weighted backprojection.
@@ -50,7 +54,9 @@ def reconstruct_full(
         pixel_size: Pixel size of tilt_data and output reconstruction (Angstroms)
         volume_dimensions_physical: Volume size in Angstroms (X, Y, Z)
         subvolume_size: Size of sub-volumes for tiled reconstruction (pixels)
-        subvolume_oversampling: Padding factor - extracts boxes of size (subvolume_size * subvolume_padding)
+        subvolume_oversampling: Padding factor - reconstructs boxes of size (subvolume_size * subvolume_padding);
+                                these dimensions are also used for tile_processing_fn if provided.
+        reconstruction_oversampling: Oversampling factor during reconstruction (default: 1.0)
         normalize: Whether to normalize tilt images
         invert: Whether to invert contrast
         apply_ctf: Whether to apply CTF correction
@@ -60,9 +66,18 @@ def reconstruct_full(
         tilt_ids: Optional tensor of tilt indices to use for reconstruction, shape (n_selected_tilts,).
                   If None, all tilts are used. (default: None)
         tile_processing_fn: Optional function to apply to each batch of reconstructed tiles before cropping.
-                           Takes tensor of shape (batch, size_padded, size_padded, size_padded) and returns
-                           tensor of the same shape. Useful for denoising, filtering, or other post-processing.
+                           Takes tensor of shape (batch, size_padded, size_padded, size_padded), and an optional
+                           tensor of the same shape reconstructed from additional_tilt_data if provided,
+                           and returns tensor of the same shape. Useful for denoising, filtering, or other
+                           post-processing.
                            (default: None)
+        ctf_ignore_below_res: Resolution in Angstroms below which CTF is fully ignored (set to 1).
+                              Must be greater than ctf_ignore_transition_res. (default: None)
+        ctf_ignore_transition_res: Resolution in Angstroms at which CTF is fully applied.
+                                   Required when ctf_ignore_below_res is set. (default: None)
+        additional_tilt_data: Optional additional tilt data for a second reconstruction that is passed
+                              to tilt_processing_fn, e.g. for noise estimation. Shape must match tilt_data.
+                              (default: None)
 
     Returns:
         Reconstructed tomogram, shape (Z, Y, X) in pixels
@@ -98,21 +113,19 @@ def reconstruct_full(
         subvolume_size=subvolume_size * subvolume_oversampling
     )
 
+    if additional_tilt_data is not None:
+        additional_tilt_data_processed = preprocess_tilt_data(
+            tilt_data=additional_tilt_data,
+            normalize=normalize,
+            invert=invert,
+            subvolume_size=subvolume_size * subvolume_oversampling
+        )
+    else:
+        additional_tilt_data_processed = None
+
     # Calculate padded extraction size (even)
     size_padded = int(subvolume_size * subvolume_oversampling)
     size_padded = (size_padded // 2) * 2  # Ensure even
-
-    # Calculate sinc^2 correction pattern for interpolation attenuation (if enabled)
-    if correct_attenuation:
-        # Generate correction for padded size with oversampling=1.0 (matching reconstruction)
-        sinc2_correction_padded = get_sinc2_correction(size=size_padded, oversampling=1.0)
-
-        # Crop to central subvolume_size (same as reconstruction cropping)
-        sinc2_correction = resize(sinc2_correction_padded, size=(subvolume_size, subvolume_size, subvolume_size))
-
-        # Take reciprocal to get correction factor: 1 / max(sinc^2, 1e-6)
-        # Move to same device as tilt_data
-        correction_factor = (1.0 / torch.clamp(sinc2_correction, min=1e-6)).to(tilt_data.device)
 
     # Generate grid of tile positions
     # Grid covers volume in steps of subvolume_size, centered on tile positions
@@ -152,18 +165,43 @@ def reconstruct_full(
             coords=batch_coords_physical,
             pixel_size=pixel_size,
             size=size_padded,
-            oversampling=1.0,
+            oversampling=reconstruction_oversampling,
             apply_ctf=apply_ctf,
             ctf_weighted=ctf_weighted,
             padding_mode='zeros',
-            tilt_ids=tilt_ids
+            tilt_ids=tilt_ids,
+            correct_attenuation=correct_attenuation,
+            ctf_ignore_below_res=ctf_ignore_below_res,
+            ctf_ignore_transition_res=ctf_ignore_transition_res,
         )
-
         reconstructed_batch *= subvolume_size
+
+        if additional_tilt_data_processed is not None:
+            # Perform second reconstruction for additional tilt data
+            additional_reconstructed_batch = ts.reconstruct_subvolumes_single(
+                tilt_data=additional_tilt_data_processed,
+                coords=batch_coords_physical,
+                pixel_size=pixel_size,
+                size=size_padded,
+                oversampling=reconstruction_oversampling,
+                apply_ctf=apply_ctf,
+                ctf_weighted=ctf_weighted,
+                padding_mode='zeros',
+                tilt_ids=tilt_ids,
+                correct_attenuation=correct_attenuation,
+                ctf_ignore_below_res=ctf_ignore_below_res,
+                ctf_ignore_transition_res=ctf_ignore_transition_res,
+            )
+            additional_reconstructed_batch *= subvolume_size
+        else:
+            additional_reconstructed_batch = None
 
         # Apply optional custom processing function to reconstructed tiles
         if tile_processing_fn is not None:
-            reconstructed_batch = tile_processing_fn(reconstructed_batch)
+            reconstructed_batch = tile_processing_fn(
+                reconstructed_batch,
+                additional_reconstructed_batch
+            )
 
         # Crop each reconstruction to central subvolume_size
         # Calculate crop boundaries
@@ -176,10 +214,6 @@ def reconstruct_full(
             crop_start:crop_end,
             crop_start:crop_end
         ]  # (batch, subvolume_size, subvolume_size, subvolume_size)
-
-        # Apply sinc^2 correction to cropped tiles (if enabled)
-        if correct_attenuation:
-            cropped_batch = cropped_batch * correction_factor
 
         # Place each tile into output volume
         for i in range(batch_end - batch_start):

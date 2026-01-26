@@ -15,9 +15,12 @@ from . import paths
 from . import load_images
 from . import reconstruct_subvolumes
 from . import reconstruct_subvolume_ctfs
+from . import reconstruct_subvolume_solid_ctfs
 from . import reconstruct_volume
 from . import import_alignments
 from . import project_realspace
+from . import stack_tilts
+from . import utils
 
 # Bind I/O methods to TiltSeries
 TiltSeries.initialize_from_tomo_star = io.initialize_from_tomo_star
@@ -56,6 +59,8 @@ TiltSeries.get_sinc2_correction = reconstruct_subvolumes.get_sinc2_correction
 # Bind CTF volume reconstruction methods to TiltSeries
 TiltSeries.reconstruct_subvolume_ctfs = reconstruct_subvolume_ctfs.reconstruct_subvolume_ctfs
 TiltSeries.reconstruct_subvolume_ctfs_single = reconstruct_subvolume_ctfs.reconstruct_subvolume_ctfs_single
+TiltSeries.reconstruct_subvolume_solid_ctfs = reconstruct_subvolume_solid_ctfs.reconstruct_subvolume_solid_ctfs
+TiltSeries.reconstruct_subvolume_solid_ctfs_single = reconstruct_subvolume_solid_ctfs.reconstruct_subvolume_solid_ctfs_single
 
 # Bind full volume reconstruction methods to TiltSeries
 TiltSeries.reconstruct_full = reconstruct_volume.reconstruct_full
@@ -66,6 +71,13 @@ TiltSeries.reconstruct_full_cs = reconstruct_volume_cs.reconstruct_full_cs
 
 # Bind real-space projection methods to TiltSeries
 TiltSeries.transform_volume = project_realspace.transform_volume
+
+# Bind tilt stack creation methods to TiltSeries
+TiltSeries.stack_tilts = stack_tilts.stack_tilts
+
+# Bind utility methods to TiltSeries
+TiltSeries.apply_tilt_shift_and_propagate = utils.apply_tilt_shift_and_propagate
+TiltSeries.apply_tomogram_shift_3d = utils.apply_tomogram_shift_3d
 
 # Bind path properties to TiltSeries
 TiltSeries.name = paths.name

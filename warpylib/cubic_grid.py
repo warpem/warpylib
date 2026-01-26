@@ -188,6 +188,10 @@ class CubicGrid:
         # Create torch spline grid operator and data view
         self._grid_operator, self._grid_data = self._create_torch_grid()
 
+        # Coefficient caching for performance
+        self._cached_coefs: Optional[torch.Tensor] = None
+        self._cache_version: Optional[int] = None
+
     @property
     def flat_values(self) -> torch.Tensor:
         """Get flat values tensor (einspline layout)"""
@@ -333,6 +337,57 @@ class CubicGrid:
 
         return (None, None)
 
+    def _compute_coefs(self) -> Optional[torch.Tensor]:
+        """Compute B-spline coefficients from grid data.
+
+        Returns:
+            Coefficients tensor, or None for degenerate/4D cases.
+        """
+        if self._grid_data is None:
+            return None
+
+        # Add channel dimension if needed and compute coefficients
+        if self.dimension_set == DimensionSets.XYZ:
+            data = self._grid_data.unsqueeze(0) if self._grid_data.ndim == 3 else self._grid_data
+            return find_coefs_3d(data)
+
+        elif self.dimension_set in (DimensionSets.XY, DimensionSets.XZ, DimensionSets.YZ):
+            data = self._grid_data.unsqueeze(0) if self._grid_data.ndim == 2 else self._grid_data
+            return find_coefs_2d(data)
+
+        elif self.dimension_set in (DimensionSets.X, DimensionSets.Y, DimensionSets.Z):
+            data = self._grid_data.unsqueeze(0) if self._grid_data.ndim == 1 else self._grid_data
+            return find_coefs_1d(data)
+
+        return None
+
+    def _get_coefs(self) -> Optional[torch.Tensor]:
+        """Get coefficients, using cache when safe.
+
+        Caches coefficients when gradients won't flow through values:
+        - When torch.is_grad_enabled() is False (inference mode)
+        - When self.values.requires_grad is False
+
+        Recomputes when gradients need to flow for backpropagation.
+
+        Returns:
+            Coefficients tensor, or None for degenerate/4D cases.
+        """
+        # Must recompute if gradients will flow through values
+        if torch.is_grad_enabled() and self.values.requires_grad:
+            return self._compute_coefs()
+
+        # Safe to cache - either no grad context or values don't require grad
+        # Use _version to detect in-place modifications
+        current_version = self.values._version
+        if self._cached_coefs is None or self._cache_version != current_version:
+            self._cached_coefs = self._compute_coefs()
+            if self._cached_coefs is not None:
+                self._cached_coefs = self._cached_coefs.detach()
+            self._cache_version = current_version
+
+        return self._cached_coefs
+
     def _transform_coords_to_torch(
         self, coords: torch.Tensor
     ) -> torch.Tensor:
@@ -423,12 +478,22 @@ class CubicGrid:
         # Transform coordinates
         torch_coords = self._transform_coords_to_torch(coords)
 
-        # Evaluate spline (gradients will flow through data -> operator -> result)
-        if self._grid_data is not None:
-            # Use our operator-based approach (preserves gradients)
-            result = self._grid_operator(self._grid_data, torch_coords).squeeze(-1)
+        # Get coefficients (cached when safe, recomputed when gradients needed)
+        coefs = self._get_coefs()
+
+        if coefs is not None:
+            # Use cached/computed coefficients with direct interpolation
+            if self.dimension_set == DimensionSets.XYZ:
+                result = interpolate_grid_3d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
+            elif self.dimension_set in (DimensionSets.XY, DimensionSets.XZ, DimensionSets.YZ):
+                result = interpolate_grid_2d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
+            elif self.dimension_set in (DimensionSets.X, DimensionSets.Y, DimensionSets.Z):
+                result = interpolate_grid_1d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
+            else:
+                # Fallback to operator (shouldn't happen)
+                result = self._grid_operator(self._grid_data, torch_coords).squeeze(-1)
         else:
-            # 4D case still using old module (TODO: fix this)
+            # 4D case still using old module (TODO: add caching for 4D)
             result = self._grid_operator(torch_coords).squeeze(-1)
 
         return result
