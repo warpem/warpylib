@@ -20,8 +20,8 @@ def reconstruct_full(
     pixel_size: float,
     volume_dimensions_physical: tuple,
     subvolume_size: int = 64,
-    subvolume_oversampling: float = 2.0,
-    reconstruction_oversampling: float = 1.0,
+    subvolume_oversampling: int = 2,
+    reconstruction_oversampling: int = 1,
     normalize: bool = True,
     invert: bool = False,
     apply_ctf: bool = True,
@@ -127,18 +127,6 @@ def reconstruct_full(
     size_padded = int(subvolume_size * subvolume_oversampling)
     size_padded = (size_padded // 2) * 2  # Ensure even
 
-    # Calculate sinc^2 correction pattern for interpolation attenuation (if enabled)
-    if correct_attenuation:
-        # Generate correction for padded size with oversampling=1.0 (matching reconstruction)
-        sinc2_correction_padded = get_sinc2_correction(size=size_padded, oversampling=1.0)
-
-        # Crop to central subvolume_size (same as reconstruction cropping)
-        sinc2_correction = resize(sinc2_correction_padded, size=(subvolume_size, subvolume_size, subvolume_size))
-
-        # Take reciprocal to get correction factor: 1 / max(sinc^2, 1e-6)
-        # Move to same device as tilt_data
-        correction_factor = (1.0 / torch.clamp(sinc2_correction, min=1e-6)).to(tilt_data.device)
-
     # Generate grid of tile positions
     # Grid covers volume in steps of subvolume_size, centered on tile positions
     grid_x = (dim_x + subvolume_size - 1) // subvolume_size
@@ -182,6 +170,7 @@ def reconstruct_full(
             ctf_weighted=ctf_weighted,
             padding_mode='zeros',
             tilt_ids=tilt_ids,
+            correct_attenuation=correct_attenuation,
             ctf_ignore_below_res=ctf_ignore_below_res,
             ctf_ignore_transition_res=ctf_ignore_transition_res,
         )
@@ -199,6 +188,7 @@ def reconstruct_full(
                 ctf_weighted=ctf_weighted,
                 padding_mode='zeros',
                 tilt_ids=tilt_ids,
+                correct_attenuation=correct_attenuation,
                 ctf_ignore_below_res=ctf_ignore_below_res,
                 ctf_ignore_transition_res=ctf_ignore_transition_res,
             )
@@ -224,10 +214,6 @@ def reconstruct_full(
             crop_start:crop_end,
             crop_start:crop_end
         ]  # (batch, subvolume_size, subvolume_size, subvolume_size)
-
-        # Apply sinc^2 correction to cropped tiles (if enabled)
-        if correct_attenuation:
-            cropped_batch = cropped_batch * correction_factor
 
         # Place each tile into output volume
         for i in range(batch_end - batch_start):

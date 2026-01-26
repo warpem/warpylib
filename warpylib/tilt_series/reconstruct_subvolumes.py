@@ -11,22 +11,6 @@ import mrcfile
 from typing import Optional
 from ..euler import euler_to_matrix, rotate_x
 from ..ops import get_sinc2_correction
-from torch_grid_utils import fftfreq_grid
-from functools import lru_cache
-
-
-@lru_cache(maxsize=2)
-def sinc2(shape, device):
-    grid = fftfreq_grid(
-        image_shape=shape,
-        rfft=False,
-        fftshift=False,
-        norm=True,
-        device=device
-    )
-    sinc2 = torch.sinc(grid) ** 2
-    correction = 1.0 / torch.clamp(sinc2, min=1e-6)
-    return correction
 
 
 def ifftshift_and_crop_3d(real_tensor: torch.Tensor, oversampling_factor: float) -> torch.Tensor:
@@ -225,14 +209,17 @@ def reconstruct_subvolumes(
     # irfftn with norm='forward' to match the example
     real_reconstruction = torch.fft.irfftn(data_rec, dim=(-3, -2, -1), norm='backward')
 
-    if correct_attenuation:
-        # sinc2 attenutation
-        real_reconstruction = real_reconstruction * sinc2(
-            (subtilt_patch_size,) * 3, device=real_reconstruction.device
-        )
-
     # ifftshift and crop to original size
     result = ifftshift_and_crop_3d(real_reconstruction, oversampling)
+
+    # sinc2 attenutation
+    if correct_attenuation:
+        result = result * \
+                 get_sinc2_correction(
+                     (size,) * 3,
+                     oversampling=oversampling,
+                     device=real_reconstruction.device
+                 )
 
     # Reshape back to original batch shape
     result = result.reshape(*original_shape, size, size, size)

@@ -12,7 +12,7 @@ import torch_projectors
 import mrcfile
 from typing import Optional
 from ..euler import euler_to_matrix, rotate_x
-from ..ops import get_sinc2_correction, resize_ft
+from ..ops import resize_ft
 
 
 def reconstruct_subvolume_ctfs(
