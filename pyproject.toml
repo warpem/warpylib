@@ -4,16 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "warpylib"
-version = "0.1.0"
-description = "Python library for cubic spline grid interpolation, replicating CubicGrid functionality"
+version = "1.0.0"
+description = "PyTorch replica of WarpLib's data and tilt series model and some functionality"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Dimitry Tegunov", email = "tegunov@gmail.com"}
 ]
-license = {text = "GPL3"}
+license = {text = "MIT"}
 classifiers = [
-    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
@@ -44,8 +43,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/warpylib"
-Repository = "https://github.com/yourusername/warpylib"
+Homepage = "https://github.com/warpem/warpylib"
+Repository = "https://github.com/warpem/warpylib"
 
 [tool.setuptools.packages.find]
 where = ["."]
