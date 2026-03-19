@@ -2,7 +2,12 @@
 warpylib - Python library replicating WarpLib functionality
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("warpylib")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 from .cubic_grid import CubicGrid, Dimension, DimensionSets
 from .ctf import CTF
