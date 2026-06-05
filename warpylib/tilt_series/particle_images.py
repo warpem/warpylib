@@ -70,13 +70,29 @@ def get_images_for_particles_rft(
     if size % 2 != 0:
         raise ValueError(f"Size must be even, got {size}")
 
-    # Get positions in Angstroms using TiltSeries transformations
+    # Get positions in Angstroms using TiltSeries transformations for ALL tilts.
+    # This must always use the full ts.n_tilts so that cubic grid indices
+    # (normalised 0..1 over n_tilts) are correct even when tilt_data is a
+    # filtered subset.
     # Shape: (..., n_tilts, 3) where Z is defocus
     positions_angstrom = get_position_in_all_tilts(ts, coords)
 
     # Convert XY to pixel coordinates
     positions_pixels = positions_angstrom[..., :2] / pixel_size  # (..., n_tilts, 2)
     positions_pixels = torch.cat(positions_pixels.split(1, dim=-1)[::-1], dim=-1)  # YX order
+
+    # If tilt_data contains only the used frames, filter positions to match.
+    # The grid interpolation above already used the original tilt indices, so
+    # the subset has correct coordinates.
+    if tilt_data.shape[0] != ts.n_tilts:
+        used_idx = ts.use_tilt.nonzero(as_tuple=True)[0]
+        if tilt_data.shape[0] != len(used_idx):
+            raise ValueError(
+                f"tilt_data has {tilt_data.shape[0]} frames but TiltSeries has "
+                f"{ts.n_tilts} tilts ({len(used_idx)} used). "
+                "tilt_data must have either all tilts or only the used tilts."
+            )
+        positions_pixels = positions_pixels[..., used_idx, :]
 
     result = subpixel_crop_2d(
         image=tilt_data,

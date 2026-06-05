@@ -100,10 +100,23 @@ def reconstruct_subvolumes(
     if n_tilts != ts.n_tilts:
         raise ValueError(f"coords has {n_tilts} tilts but TiltSeries has {ts.n_tilts}")
 
+    # Compute the set of tilt indices that should participate in reconstruction.
+    # Two cases require filtering:
+    #   (a) tilt_data has only N_used frames — detected by shape mismatch.
+    #   (b) tilt_data has all N_total frames but some are marked use_tilt=False.
+    # In both cases we slice images, CTF, and Euler angles to the same subset so
+    # that the backprojector only sees contributing tilts.
+    if tilt_data.shape[0] != ts.n_tilts or not ts.use_tilt.all():
+        effective_used_idx = ts.use_tilt.nonzero(as_tuple=True)[0]
+    else:
+        effective_used_idx = None
+
     # extraction patch size
     subtilt_patch_size = int(size * oversampling)
 
-    # Get sub-images in Fourier space (..., n_tilts, size, size//2+1)
+    # Get sub-images in Fourier space.
+    # Shape: (..., N_used, h, w) when tilt_data has only used frames,
+    #        (..., N_total, h, w) otherwise.
     images_rft = ts.get_images_for_particles_rft(
         tilt_data=tilt_data,
         coords=coords,
@@ -112,9 +125,15 @@ def reconstruct_subvolumes(
         padding_mode=padding_mode
     )
 
+    # For the full-stack case with excluded tilts, filter images_rft down to
+    # used frames before CTF multiplication. The partial-stack case is already
+    # the right size (get_images_for_particles_rft handled it).
+    if effective_used_idx is not None and tilt_data.shape[0] == ts.n_tilts:
+        images_rft = images_rft[..., effective_used_idx, :, :]
+
     # Get CTFs if requested
     if apply_ctf:
-        # Get CTFs for particles (..., n_tilts)
+        # Get CTFs for particles (..., n_tilts) — always computed for all tilts
         ctfs = ts.get_ctfs_for_particles(
             coords=coords,
             pixel_size=pixel_size,
@@ -129,6 +148,10 @@ def reconstruct_subvolumes(
             ignore_transition_res=ctf_ignore_transition_res,
         )
 
+        # ctf_2d is always N_total; slice to N_used whenever some tilts are excluded
+        if effective_used_idx is not None:
+            ctf_2d = ctf_2d[..., effective_used_idx, :, :]
+
         # Apply CTF correction: multiply images by CTF
         images_rft = images_rft * ctf_2d
 
@@ -136,6 +159,9 @@ def reconstruct_subvolumes(
         ctf_2d = torch.abs(ctf_2d)
     else:
         ctf_2d = torch.ones(images_rft.shape, dtype=torch.float32, device=images_rft.device)
+
+    # n_tilts now reflects the actual number of frames entering backprojection
+    n_tilts = images_rft.shape[-3]
 
     # Filter by tilt_ids if provided
     if tilt_ids is not None:
@@ -159,8 +185,12 @@ def reconstruct_subvolumes(
     # These transform from volume space to image space
     deg_to_rad = torch.pi / 180.0
 
-    # Stack Euler angles for all tilts (..., n_tilts, 3)
+    # Stack Euler angles for all tilts (..., ts.n_tilts, 3)
     euler_angles = ts.get_angle_in_all_tilts(coords=coords, angles=angles)
+
+    # Filter Euler angles to used tilts
+    if effective_used_idx is not None:
+        euler_angles = euler_angles[..., effective_used_idx, :]
 
     # Filter Euler angles by tilt_ids if provided
     if tilt_ids is not None:

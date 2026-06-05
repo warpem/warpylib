@@ -597,6 +597,160 @@ class TestReconstructSubvolumes:
             print(f"  Max value: {correction.max():.6f}")
             print(f"  Edge value: {correction[0, center_idx, center_idx]:.6f}")
 
+    def test_use_tilt_excluded_stack_no_crash(self):
+        """Reconstruction must not crash when tilt_data only contains used tilts.
+
+        This is the common case after prepare_stacks_parallel: stack_tilts writes
+        only the frames where use_tilt is True, so tilt_data.shape[0] < ts.n_tilts.
+        """
+        ts = TiltSeries(n_tilts=5)
+        ts.angles = torch.tensor([-40.0, -20.0, 0.0, 20.0, 40.0])
+        ts.dose = torch.tensor([0.0, 25.0, 50.0, 75.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+        ts.use_tilt = torch.tensor([True, False, True, False, True])
+
+        # Stack has only 3 used frames (tilts 0, 2, 4)
+        tilt_data = torch.randn(3, 128, 128)
+        coord = torch.tensor([50.0, 50.0, 25.0])
+
+        result = ts.reconstruct_subvolumes_single(
+            tilt_data=tilt_data,
+            coords=coord,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False,
+        )
+
+        assert result.shape == (32, 32, 32)
+        assert torch.all(torch.isfinite(result))
+
+    def test_use_tilt_excluded_stack_no_crash_with_ctf(self):
+        """Same as above but with CTF applied."""
+        ts = TiltSeries(n_tilts=5)
+        ts.angles = torch.tensor([-40.0, -20.0, 0.0, 20.0, 40.0])
+        ts.dose = torch.tensor([0.0, 25.0, 50.0, 75.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+        ts.use_tilt = torch.tensor([True, False, True, False, True])
+
+        tilt_data = torch.randn(3, 128, 128)
+        coord = torch.tensor([50.0, 50.0, 25.0])
+
+        result = ts.reconstruct_subvolumes_single(
+            tilt_data=tilt_data,
+            coords=coord,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=True,
+        )
+
+        assert result.shape == (32, 32, 32)
+        assert torch.all(torch.isfinite(result))
+
+    def test_use_tilt_excluded_stack_invalid_frame_count(self):
+        """A frame count that matches neither N_total nor N_used must raise."""
+        ts = TiltSeries(n_tilts=5)
+        ts.angles = torch.tensor([-40.0, -20.0, 0.0, 20.0, 40.0])
+        ts.dose = torch.tensor([0.0, 25.0, 50.0, 75.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+        ts.use_tilt = torch.tensor([True, False, True, False, True])
+
+        # 4 frames — not 5 (all) and not 3 (used)
+        tilt_data = torch.randn(4, 128, 128)
+        coord = torch.tensor([50.0, 50.0, 25.0])
+
+        with pytest.raises(ValueError, match="tilt_data"):
+            ts.reconstruct_subvolumes_single(
+                tilt_data=tilt_data,
+                coords=coord,
+                pixel_size=10.0,
+                size=32,
+                apply_ctf=False,
+            )
+
+    def test_use_tilt_excluded_zero_gradient(self):
+        """Excluded tilt shifts must receive zero gradient through reconstruction.
+
+        When tilt_data contains only used frames, the optimizer parameters for
+        excluded tilts must not accumulate gradient (so LBFGS leaves them frozen).
+        """
+        ts = TiltSeries(n_tilts=5)
+        ts.angles = torch.tensor([-40.0, -20.0, 0.0, 20.0, 40.0])
+        ts.dose = torch.tensor([0.0, 25.0, 50.0, 75.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+        ts.use_tilt = torch.tensor([True, False, True, False, True])
+
+        tilt_data = torch.randn(3, 128, 128)
+
+        # Simulate the alignment optimizer: per-tilt shift parameters
+        initial_offset_y = ts.tilt_axis_offset_y.clone()
+        shifts_y = torch.zeros(5, requires_grad=True)
+        ts.tilt_axis_offset_y = initial_offset_y + shifts_y
+
+        coord = torch.tensor([50.0, 50.0, 25.0])
+        result = ts.reconstruct_subvolumes_single(
+            tilt_data=tilt_data,
+            coords=coord,
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False,
+        )
+        result.sum().backward()
+
+        # Excluded tilts (1 and 3) must have zero gradient
+        assert shifts_y.grad is not None
+        assert shifts_y.grad[1].item() == 0.0, "excluded tilt 1 should have zero gradient"
+        assert shifts_y.grad[3].item() == 0.0, "excluded tilt 3 should have zero gradient"
+        # Used tilts should have non-zero gradients
+        assert shifts_y.grad[[0, 2, 4]].abs().sum().item() > 0.0
+
+    def test_use_tilt_full_stack_apply_ctf_false_excluded_zero_weight(self):
+        """When the stack contains ALL frames but some are excluded, apply_ctf=False
+        must still give zero weight to excluded tilts.
+
+        Before the fix, excluded frames contributed equally to the reconstruction
+        when CTF was disabled, because ctf_2d was set to all-ones.
+        """
+        ts = TiltSeries(n_tilts=5)
+        ts.angles = torch.tensor([-40.0, -20.0, 0.0, 20.0, 40.0])
+        ts.dose = torch.tensor([0.0, 25.0, 50.0, 75.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+        ts.use_tilt = torch.tensor([True, False, True, False, True])
+
+        # Full stack — but frames 1 and 3 are marked excluded
+        tilt_data_base = torch.randn(5, 128, 128)
+
+        # Reconstruction using base images
+        result_base = ts.reconstruct_subvolumes_single(
+            tilt_data=tilt_data_base,
+            coords=torch.tensor([50.0, 50.0, 25.0]),
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False,
+        )
+
+        # Replace excluded frames with very different values
+        tilt_data_modified = tilt_data_base.clone()
+        tilt_data_modified[1] = tilt_data_modified[1] * 1000.0
+        tilt_data_modified[3] = tilt_data_modified[3] * 1000.0
+
+        result_modified = ts.reconstruct_subvolumes_single(
+            tilt_data=tilt_data_modified,
+            coords=torch.tensor([50.0, 50.0, 25.0]),
+            pixel_size=10.0,
+            size=32,
+            apply_ctf=False,
+        )
+
+        # Results must be identical: excluded frames must not contribute
+        assert torch.allclose(result_base, result_modified, atol=1e-5), (
+            "Excluded tilt frames should not affect reconstruction"
+        )
+
     def test_write_reconstructions_to_mrc(self):
         """Write out reconstructions to MRC files for visual inspection using real data"""
         # Setup test outputs directory
