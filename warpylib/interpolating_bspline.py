@@ -315,6 +315,134 @@ def find_coefs_3d(
     return coefs
 
 
+def find_coefs_4d(
+    data: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Find B-spline coefficients for 4D data with natural boundary conditions.
+
+    Uses separable approach with batched solves along each of the 4 dimensions.
+
+    Args:
+        data: (C, M0, M1, M2, M3) data values to interpolate
+
+    Returns:
+        coefs: (C, M0+2, M1+2, M2+2, M3+2) B-spline coefficients
+    """
+    if data.ndim == 4:
+        data = data.unsqueeze(0)
+        squeeze_output = True
+    else:
+        squeeze_output = False
+
+    C, M0, M1, M2, M3 = data.shape
+
+    A0 = _build_1d_system_matrix(M0, dtype=data.dtype, device=data.device)
+    A1 = _build_1d_system_matrix(M1, dtype=data.dtype, device=data.device)
+    A2 = _build_1d_system_matrix(M2, dtype=data.dtype, device=data.device)
+    A3 = _build_1d_system_matrix(M3, dtype=data.dtype, device=data.device)
+
+    # Step 1: solve along dim 0 (M0)
+    flat = data.permute(0, 2, 3, 4, 1).reshape(-1, M0)
+    B = torch.zeros(flat.shape[0], M0 + 2, dtype=data.dtype, device=data.device)
+    B[:, 1:M0 + 1] = flat
+    coefs0 = torch.linalg.solve(A0, B.T).T.reshape(C, M1, M2, M3, M0 + 2).permute(0, 4, 1, 2, 3)
+
+    # Step 2: solve along dim 1 (M1)
+    flat = coefs0.permute(0, 1, 3, 4, 2).reshape(-1, M1)
+    B = torch.zeros(flat.shape[0], M1 + 2, dtype=data.dtype, device=data.device)
+    B[:, 1:M1 + 1] = flat
+    coefs01 = torch.linalg.solve(A1, B.T).T.reshape(C, M0 + 2, M2, M3, M1 + 2).permute(0, 1, 4, 2, 3)
+
+    # Step 3: solve along dim 2 (M2)
+    flat = coefs01.permute(0, 1, 2, 4, 3).reshape(-1, M2)
+    B = torch.zeros(flat.shape[0], M2 + 2, dtype=data.dtype, device=data.device)
+    B[:, 1:M2 + 1] = flat
+    coefs012 = torch.linalg.solve(A2, B.T).T.reshape(C, M0 + 2, M1 + 2, M3, M2 + 2).permute(0, 1, 2, 4, 3)
+
+    # Step 4: solve along dim 3 (M3, already last)
+    flat = coefs012.reshape(-1, M3)
+    B = torch.zeros(flat.shape[0], M3 + 2, dtype=data.dtype, device=data.device)
+    B[:, 1:M3 + 1] = flat
+    coefs = torch.linalg.solve(A3, B.T).T.reshape(C, M0 + 2, M1 + 2, M2 + 2, M3 + 2)
+
+    if squeeze_output:
+        coefs = coefs.squeeze(0)
+
+    return coefs
+
+
+def interpolate_grid_4d(
+    data: torch.Tensor,
+    u: torch.Tensor,
+    matrix: Optional[torch.Tensor] = None,
+    monotonicity: Optional[str] = None,
+) -> torch.Tensor:
+    """
+    Interpolate 4D grid data using interpolating B-splines.
+
+    Args:
+        data: (C, M0+2, M1+2, M2+2, M3+2) padded grid data (B-spline coefficients)
+        u: (B, 4) batch of coordinates in [0, 1]^4
+        matrix: Ignored (for API compatibility)
+        monotonicity: Optional monotonicity constraint (not yet implemented)
+
+    Returns:
+        values: (B, C) interpolated values
+    """
+    _ = matrix
+    if monotonicity is not None:
+        raise NotImplementedError("Monotonicity constraints not yet implemented for interpolating B-splines")
+
+    C, M0p2, M1p2, M2p2, M3p2 = data.shape
+    M0 = M0p2 - 2
+    M1 = M1p2 - 2
+    M2 = M2p2 - 2
+    M3 = M3p2 - 2
+
+    basis_matrix = EINSPLINE_BASIS_MATRIX.to(device=data.device, dtype=data.dtype)
+    offsets = torch.arange(4, device=data.device)
+
+    def _cell_and_basis(un: torch.Tensor, M: int):
+        un_norm = un * (M - 1)
+        i = torch.floor(un_norm).long()
+        t = un_norm - i.float()
+        mask_low = un_norm < 0
+        i = torch.where(mask_low, torch.zeros_like(i), i)
+        t = torch.where(mask_low, un_norm, t)
+        mask_high = un_norm >= M - 2
+        i = torch.where(mask_high, torch.full_like(i, M - 2), i)
+        t = torch.where(mask_high, un_norm - (M - 2), t)
+        t_powers = torch.stack([t**3, t**2, t, torch.ones_like(t)], dim=1)
+        return i, torch.matmul(basis_matrix, t_powers.T)  # i: (B,), basis: (4, B)
+
+    i0, b0 = _cell_and_basis(u[:, 0], M0)
+    i1, b1 = _cell_and_basis(u[:, 1], M1)
+    i2, b2 = _cell_and_basis(u[:, 2], M2)
+    i3, b3 = _cell_and_basis(u[:, 3], M3)
+
+    i0e = i0.unsqueeze(0) + offsets.unsqueeze(1)  # (4, B)
+    i1e = i1.unsqueeze(0) + offsets.unsqueeze(1)
+    i2e = i2.unsqueeze(0) + offsets.unsqueeze(1)
+    i3e = i3.unsqueeze(0) + offsets.unsqueeze(1)
+
+    # Extract 4x4x4x4 control points: (C, 4, 4, 4, 4, B)
+    ctrl = data[
+        :,
+        i0e[:, None, None, None, :],
+        i1e[None, :, None, None, :],
+        i2e[None, None, :, None, :],
+        i3e[None, None, None, :, :],
+    ]
+
+    out = torch.einsum('cijklb,ib->cjklb', ctrl, b0)
+    out = torch.einsum('cjklb,jb->cklb', out, b1)
+    out = torch.einsum('cklb,kb->clb', out, b2)
+    out = torch.einsum('clb,lb->cb', out, b3)
+
+    return out.T  # (B, C)
+
+
 def interpolate_grid_2d(
     data: torch.Tensor,
     u: torch.Tensor,
