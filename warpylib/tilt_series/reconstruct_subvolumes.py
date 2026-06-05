@@ -100,12 +100,9 @@ def reconstruct_subvolumes(
     if n_tilts != ts.n_tilts:
         raise ValueError(f"coords has {n_tilts} tilts but TiltSeries has {ts.n_tilts}")
 
-    # Compute the set of tilt indices that should participate in reconstruction.
-    # Two cases require filtering:
-    #   (a) tilt_data has only N_used frames — detected by shape mismatch.
-    #   (b) tilt_data has all N_total frames but some are marked use_tilt=False.
-    # In both cases we slice images, CTF, and Euler angles to the same subset so
-    # that the backprojector only sees contributing tilts.
+    # Zeroing weights alone doesn't suppress signal in backprojection, so
+    # images/CTF/angles must be sliced to used tilts in both the partial-stack
+    # case (tilt_data has N_used frames) and the full-stack-with-excluded case.
     if tilt_data.shape[0] != ts.n_tilts or not ts.use_tilt.all():
         effective_used_idx = ts.use_tilt.nonzero(as_tuple=True)[0]
     else:
@@ -125,9 +122,8 @@ def reconstruct_subvolumes(
         padding_mode=padding_mode
     )
 
-    # For the full-stack case with excluded tilts, filter images_rft down to
-    # used frames before CTF multiplication. The partial-stack case is already
-    # the right size (get_images_for_particles_rft handled it).
+    # Partial-stack case already filtered by get_images_for_particles_rft;
+    # full-stack-with-excluded case needs explicit filtering here.
     if effective_used_idx is not None and tilt_data.shape[0] == ts.n_tilts:
         images_rft = images_rft[..., effective_used_idx, :, :]
 
@@ -188,7 +184,6 @@ def reconstruct_subvolumes(
     # Stack Euler angles for all tilts (..., ts.n_tilts, 3)
     euler_angles = ts.get_angle_in_all_tilts(coords=coords, angles=angles)
 
-    # Filter Euler angles to used tilts
     if effective_used_idx is not None:
         euler_angles = euler_angles[..., effective_used_idx, :]
 

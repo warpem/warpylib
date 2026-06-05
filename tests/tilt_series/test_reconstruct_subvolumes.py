@@ -555,10 +555,10 @@ class TestReconstructSubvolumes:
             # Check shape and values
             assert correction.shape == (size, size, size)
             assert torch.all(torch.isfinite(correction))
-            assert torch.all(correction > 0)  # sinc^2 should be positive
-            assert torch.all(correction <= 1.0)  # sinc^2(0) = 1 is the maximum
+            assert torch.all(correction > 0)  # 1/sinc^2 is always positive
+            assert torch.all(correction >= 1.0)  # DC (r=0) is the minimum at 1.0; grows at high freq
 
-            # Check that center value is 1.0 (DC component)
+            # Check that center value is 1.0 (DC component — minimum of the correction)
             center_idx = size // 2
             assert torch.isclose(correction[center_idx, center_idx, center_idx],
                                torch.tensor(1.0), atol=1e-5)

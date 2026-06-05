@@ -7,17 +7,16 @@ from warpylib.ops import get_sinc2_correction, get_sinc2_correction_rft
 
 
 def test_sinc2_correction_3d_cubic():
-    """Test 3D cubic sinc^2 correction (original behavior)."""
+    """Test 3D cubic sinc^2 correction (1/sinc^2 inverse correction factor)."""
     size = 64
     correction = get_sinc2_correction(size)
 
     assert correction.shape == (size, size, size)
     assert correction.dtype == torch.float32
-    # Center value should be 1 (sinc(0) = 1)
+    # Center (DC) value should be 1 — the minimum of the correction
     assert torch.isclose(correction[size//2, size//2, size//2], torch.tensor(1.0))
-    # All values should be in [0, 1]
-    assert correction.min() >= 0.0
-    assert correction.max() <= 1.0
+    # Correction is 1/sinc^2: always >= 1, grows toward high frequencies
+    assert correction.min() >= 1.0
 
 
 def test_sinc2_correction_3d_cuboid():
@@ -27,11 +26,10 @@ def test_sinc2_correction_3d_cuboid():
 
     assert correction.shape == (depth, height, width)
     assert correction.dtype == torch.float32
-    # Center value should be 1
+    # Center (DC) value should be 1 — the minimum of the correction
     assert torch.isclose(correction[depth//2, height//2, width//2], torch.tensor(1.0))
-    # All values should be in [0, 1]
-    assert correction.min() >= 0.0
-    assert correction.max() <= 1.0
+    # Correction is 1/sinc^2: always >= 1
+    assert correction.min() >= 1.0
 
 
 def test_sinc2_correction_2d_square():
@@ -41,11 +39,10 @@ def test_sinc2_correction_2d_square():
 
     assert correction.shape == (size, size)
     assert correction.dtype == torch.float32
-    # Center value should be 1
+    # Center (DC) value should be 1 — the minimum of the correction
     assert torch.isclose(correction[size//2, size//2], torch.tensor(1.0))
-    # All values should be in [0, 1]
-    assert correction.min() >= 0.0
-    assert correction.max() <= 1.0
+    # Correction is 1/sinc^2: always >= 1
+    assert correction.min() >= 1.0
 
 
 def test_sinc2_correction_2d_rectangular():
@@ -55,35 +52,34 @@ def test_sinc2_correction_2d_rectangular():
 
     assert correction.shape == (height, width)
     assert correction.dtype == torch.float32
-    # Center value should be 1
+    # Center (DC) value should be 1 — the minimum of the correction
     assert torch.isclose(correction[height//2, width//2], torch.tensor(1.0))
-    # All values should be in [0, 1]
-    assert correction.min() >= 0.0
-    assert correction.max() <= 1.0
+    # Correction is 1/sinc^2: always >= 1
+    assert correction.min() >= 1.0
 
 
 def test_sinc2_correction_oversampling_3d():
-    """Test that oversampling reduces attenuation in 3D."""
+    """Test that oversampling reduces the correction magnitude in 3D."""
     size = 64
 
     correction_os1 = get_sinc2_correction(size, oversampling=1.0)
     correction_os2 = get_sinc2_correction(size, oversampling=2.0)
 
-    # With higher oversampling, edge values should be higher (less attenuation)
+    # Higher oversampling means less sinc^2 attenuation → smaller correction factor needed at edges
     edge_idx = 0
-    assert correction_os2[edge_idx, size//2, size//2] > correction_os1[edge_idx, size//2, size//2]
+    assert correction_os2[edge_idx, size//2, size//2] < correction_os1[edge_idx, size//2, size//2]
 
 
 def test_sinc2_correction_oversampling_2d():
-    """Test that oversampling reduces attenuation in 2D."""
+    """Test that oversampling reduces the correction magnitude in 2D."""
     size = 128
 
     correction_os1 = get_sinc2_correction((size, size), oversampling=1.0)
     correction_os2 = get_sinc2_correction((size, size), oversampling=2.0)
 
-    # With higher oversampling, edge values should be higher (less attenuation)
+    # Higher oversampling means less sinc^2 attenuation → smaller correction factor needed at edges
     edge_idx = 0
-    assert correction_os2[edge_idx, size//2] > correction_os1[edge_idx, size//2]
+    assert correction_os2[edge_idx, size//2] < correction_os1[edge_idx, size//2]
 
 
 def test_sinc2_correction_symmetry_3d():
@@ -120,30 +116,27 @@ def test_sinc2_correction_symmetry_2d():
 
 
 def test_sinc2_correction_monotonic_decrease_3d():
-    """Test that 3D correction decreases monotonically from center."""
+    """Test that 3D correction increases from center (DC is the minimum)."""
     size = 64
     correction = get_sinc2_correction(size)
 
     center = size // 2
-    # Values along x-axis from center should generally decrease
-    # (ignoring oscillations, check average trend)
     central_line = correction[center, center, center:]
 
-    # Check that the value at center is the maximum
-    assert central_line[0] == central_line.max()
+    # DC (center) is the minimum of the correction factor; it increases toward high frequencies
+    assert central_line[0] == central_line.min()
 
 
 def test_sinc2_correction_monotonic_decrease_2d():
-    """Test that 2D correction decreases from center."""
+    """Test that 2D correction increases from center (DC is the minimum)."""
     size = 128
     correction = get_sinc2_correction((size, size))
 
     center = size // 2
-    # Values along x-axis from center
     central_line = correction[center, center:]
 
-    # Check that the value at center is the maximum
-    assert central_line[0] == central_line.max()
+    # DC (center) is the minimum of the correction factor; it increases toward high frequencies
+    assert central_line[0] == central_line.min()
 
 
 @pytest.mark.parametrize("size,expected_shape", [
@@ -178,8 +171,7 @@ def test_sinc2_correction_values_range():
 
     for size, oversampling in configs:
         correction = get_sinc2_correction(size, oversampling=oversampling)
-        assert correction.min() >= 0.0
-        assert correction.max() <= 1.0
+        assert correction.min() >= 1.0  # 1/sinc^2 is always >= 1
 
 
 def test_sinc2_correction_backward_compatibility():
