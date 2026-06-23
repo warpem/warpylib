@@ -334,9 +334,6 @@ grid_values = grid.get_interpolated_grid(
 **Convenience constructors:**
 
 ```python
-# Uniform-value grid
-grid = CubicGrid.from_scalar(dimensions=(5, 5, 5), value=1.0)
-
 # Linear gradient along one axis
 grid = CubicGrid(
     dimensions=(10, 10, 10),
@@ -353,9 +350,9 @@ grid = CubicGrid(
 grid_fine = grid.resize(new_size=(20, 20, 20))
 
 # Extract 2D slices
-slice_xy = grid.get_slice_xy(index=5)   # (X*Y,)
-slice_xz = grid.get_slice_xz(index=5)
-slice_yz = grid.get_slice_yz(index=5)
+slice_xy = grid.get_slice_xy(z=5)   # (X*Y,)
+slice_xz = grid.get_slice_xz(y=5)
+slice_yz = grid.get_slice_yz(x=5)
 
 # Reduce dimensionality
 grid_2d = grid.collapse_z()    # average over Z
