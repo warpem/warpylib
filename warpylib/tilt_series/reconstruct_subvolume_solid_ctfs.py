@@ -16,7 +16,7 @@ import mrcfile
 from typing import Optional
 from ..ctf import CTF
 from ..euler import euler_to_matrix
-from ..ops import get_sinc2_correction, resize_ft
+from ..ops import resize_ft
 
 
 def _get_param_at_tilt(param, tilt_idx, batch_shape, device):
