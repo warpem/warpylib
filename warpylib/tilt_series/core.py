@@ -39,6 +39,15 @@ class TiltSeries:
             n_tilts: Number of tilts in the series (used if not loading from file)
             image_dimensions_physical: (2,) tensor with image dimensions in Angstroms
             volume_dimensions_physical: (3,) tensor with volume dimensions in Angstroms
+
+        Note:
+            When ``path`` is given, ``load_meta`` runs after these kwargs are
+            applied, so the XML is the source of truth: if it carries
+            ``ImageDimensionsAngstrom``/``VolumeDimensionsAngstrom`` (as current
+            Warp exports do), those values silently override the corresponding
+            kwargs. The kwargs only take effect when the XML omits the attribute.
+            Don't pass a dimension kwarg alongside a path expecting it to win;
+            either rely on the XML, or set the field after construction.
         """
         # Path handling (mimics Movie.cs constructor)
         self.path: str = path if path is not None else ""
@@ -119,7 +128,9 @@ class TiltSeries:
         self.grid_volume_warp_y: CubicGrid = CubicGrid((1, 1, 1, 1))
         self.grid_volume_warp_z: CubicGrid = CubicGrid((1, 1, 1, 1))
 
-        # Load metadata if path is provided (mimics Movie.cs constructor behavior)
+        # Load metadata if path is provided (mimics Movie.cs constructor behavior).
+        # Runs last, so any dimension attributes in the XML override the
+        # image/volume dimension kwargs set above (see __init__ docstring note).
         if path is not None:
             from .io import load_meta
             load_meta(self, self.xml_path)
