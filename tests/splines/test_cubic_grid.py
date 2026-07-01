@@ -75,76 +75,111 @@ class TestCubicGridBasic:
 class TestCubicGrid1D:
     """Test 1D interpolation"""
 
-    def test_1d_interpolation(self):
-        """Test 1D interpolation passes through data points"""
-        data = torch.tensor([0.0, 1.0, 2.0, 3.0, 4.0], dtype=torch.float32)
-        grid = CubicGrid((5, 1, 1), data)
+    def _ramp_grid(self, dims, ramp_coord_idx):
+        """Build a grid with a linear ramp along one coordinate."""
+        x_dim, y_dim, z_dim = dims
+        data = torch.zeros(x_dim * y_dim * z_dim, dtype=torch.float32)
+        for z in range(z_dim):
+            for y in range(y_dim):
+                for x in range(x_dim):
+                    idx = (z * y_dim + y) * x_dim + x
+                    data[idx] = float([x, y, z][ramp_coord_idx])
+        return CubicGrid(dims, data)
 
-        # Test at grid points
-        test_coords = torch.tensor([[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0],
-                                     [0.75, 0.0, 0.0], [1.0, 0.0, 0.0]])
-        results = grid.get_interpolated(test_coords)
+    def test_1d_x_passes_through(self):
+        grid = self._ramp_grid((5, 1, 1), ramp_coord_idx=0)
+        coords = torch.tensor([[0.0, 0.0, 0.0], [0.25, 0.0, 0.0], [0.5, 0.0, 0.0],
+                                [0.75, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        results = grid.get_interpolated(coords)
+        for i, expected in enumerate([0.0, 1.0, 2.0, 3.0, 4.0]):
+            assert abs(results[i].item() - expected) < 1e-4
 
-        # Should pass through grid points with small error
-        assert abs(results[0].item() - 0.0) < 1e-4
-        assert abs(results[2].item() - 2.0) < 1e-4
-        assert abs(results[4].item() - 4.0) < 1e-4
+    def test_1d_y_passes_through(self):
+        grid = self._ramp_grid((1, 5, 1), ramp_coord_idx=1)
+        coords = torch.tensor([[0.0, 0.0, 0.0], [0.0, 0.25, 0.0], [0.0, 0.5, 0.0],
+                                [0.0, 0.75, 0.0], [0.0, 1.0, 0.0]])
+        results = grid.get_interpolated(coords)
+        for i, expected in enumerate([0.0, 1.0, 2.0, 3.0, 4.0]):
+            assert abs(results[i].item() - expected) < 1e-4
+
+    def test_1d_z_passes_through(self):
+        grid = self._ramp_grid((1, 1, 5), ramp_coord_idx=2)
+        coords = torch.tensor([[0.0, 0.0, 0.0], [0.0, 0.0, 0.25], [0.0, 0.0, 0.5],
+                                [0.0, 0.0, 0.75], [0.0, 0.0, 1.0]])
+        results = grid.get_interpolated(coords)
+        for i, expected in enumerate([0.0, 1.0, 2.0, 3.0, 4.0]):
+            assert abs(results[i].item() - expected) < 1e-4
 
 
 class TestCubicGrid2D:
     """Test 2D interpolation"""
 
-    def test_2d_xy_interpolation(self):
-        """Test 2D XY interpolation"""
-        dims = (4, 5, 1)
-        data = torch.arange(torch.tensor(dims).prod().item(), dtype=torch.float32)
-        grid = CubicGrid(dims, data)
+    def _x_ramp_grid(self, dims):
+        """Build a grid with a linear ramp along X."""
+        x_dim, y_dim, z_dim = dims
+        data = torch.zeros(x_dim * y_dim * z_dim, dtype=torch.float32)
+        for z in range(z_dim):
+            for y in range(y_dim):
+                for x in range(x_dim):
+                    data[(z * y_dim + y) * x_dim + x] = float(x)
+        return CubicGrid(dims, data)
 
-        # Test at corners
-        test_coords = torch.tensor([
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-        ])
-        results = grid.get_interpolated(test_coords)
+    def test_2d_xy_passes_through(self):
+        # dims (4,5,1): X varies 0..3, sample along X at y=0
+        grid = self._x_ramp_grid((4, 5, 1))
+        coords = torch.tensor([[0.0, 0.0, 0.0], [1/3, 0.0, 0.0], [2/3, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        results = grid.get_interpolated(coords)
+        for i, expected in enumerate([0.0, 1.0, 2.0, 3.0]):
+            assert abs(results[i].item() - expected) < 1e-4
 
-        # Check that we get reasonable values (should be close to corners)
-        assert len(results) == 4
-        assert all(torch.isfinite(results))
+    def test_2d_xz_passes_through(self):
+        # dims (3,1,5): X varies 0..2, sample along X at z=0
+        grid = self._x_ramp_grid((3, 1, 5))
+        coords = torch.tensor([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        results = grid.get_interpolated(coords)
+        for i, expected in enumerate([0.0, 1.0, 2.0]):
+            assert abs(results[i].item() - expected) < 1e-4
+
+    def test_2d_yz_passes_through(self):
+        # dims (1,4,5): Y varies 0..3, sample along Y at z=0
+        y_dim, z_dim = 4, 5
+        data = torch.zeros(y_dim * z_dim, dtype=torch.float32)
+        for z in range(z_dim):
+            for y in range(y_dim):
+                data[z * y_dim + y] = float(y)
+        grid = CubicGrid((1, y_dim, z_dim), data)
+        coords = torch.tensor([[0.0, 0.0, 0.0], [0.0, 1/3, 0.0], [0.0, 2/3, 0.0], [0.0, 1.0, 0.0]])
+        results = grid.get_interpolated(coords)
+        for i, expected in enumerate([0.0, 1.0, 2.0, 3.0]):
+            assert abs(results[i].item() - expected) < 1e-4
 
 
 class TestCubicGrid3D:
     """Test 3D interpolation"""
 
-    def test_3d_interpolation(self):
-        """Test 3D interpolation"""
+    def test_3d_passes_through(self):
+        # Linear ramp in X across a 3x4x5 grid, sample along X at y=z=0
+        x_dim, y_dim, z_dim = 3, 4, 5
+        data = torch.zeros(x_dim * y_dim * z_dim, dtype=torch.float32)
+        for z in range(z_dim):
+            for y in range(y_dim):
+                for x in range(x_dim):
+                    data[(z * y_dim + y) * x_dim + x] = float(x)
+        grid = CubicGrid((x_dim, y_dim, z_dim), data)
+        coords = torch.tensor([[0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [1.0, 0.0, 0.0]])
+        results = grid.get_interpolated(coords)
+        for i, expected in enumerate([0.0, 1.0, 2.0]):
+            assert abs(results[i].item() - expected) < 1e-4
+
+    def test_3d_finite_values(self):
         dims = (3, 4, 5)
         data = torch.arange(torch.tensor(dims).prod().item(), dtype=torch.float32)
         grid = CubicGrid(dims, data)
-
-        # Test at origin
-        test_coords = torch.tensor([[0.0, 0.0, 0.0]])
-        results = grid.get_interpolated(test_coords)
-
-        assert len(results) == 1
-        assert torch.isfinite(results[0])
-
-    def test_3d_interpolation_multiple_points(self):
-        """Test 3D interpolation with multiple points"""
-        dims = (3, 4, 5)
-        data = torch.arange(torch.tensor(dims).prod().item(), dtype=torch.float32)
-        grid = CubicGrid(dims, data)
-
         test_coords = torch.tensor([
-            [0.0, 0.0, 0.0],
-            [0.5, 0.0, 0.0],
-            [0.0, 0.5, 0.0],
-            [0.0, 0.0, 0.5],
-            [0.5, 0.5, 0.5],
+            [0.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 0.0],
+            [0.0, 0.0, 0.5], [0.5, 0.5, 0.5],
         ])
         results = grid.get_interpolated(test_coords)
-
         assert len(results) == 5
         assert all(torch.isfinite(results))
 
@@ -588,6 +623,77 @@ class TestCubicGridOptimization:
         print(f"\nMonotonic convergence: Early avg loss: {early_loss:.6f}, Late avg loss: {late_loss:.6f}")
 
         assert late_loss < early_loss, "Loss should decrease over time"
+
+
+class TestCubicGrid4D:
+    """Test 4D interpolation via the custom B-spline implementation."""
+
+    def _make_grid(self, dims=(3, 4, 5, 6)):
+        x_dim, y_dim, z_dim, w_dim = dims
+        total = x_dim * y_dim * z_dim * w_dim
+        values = torch.arange(total, dtype=torch.float32)
+        return CubicGrid(dims, values)
+
+    def test_dimension_detection_4d(self):
+        grid = self._make_grid()
+        assert grid.dimension_set == DimensionSets.XYZW
+
+    def test_4d_output_shape(self):
+        grid = self._make_grid()
+        coords = torch.rand(7, 4)
+        out = grid.get_interpolated(coords)
+        assert out.shape == (7,)
+
+    def test_4d_finite_values(self):
+        grid = self._make_grid()
+        coords = torch.tensor([
+            [0.0, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.5, 0.5, 0.5, 0.5],
+            [1.0, 1.0, 1.0, 1.0],
+        ])
+        out = grid.get_interpolated(coords)
+        assert torch.all(torch.isfinite(out))
+
+    def test_4d_passes_through_data_points(self):
+        """Interpolating spline must reproduce values at grid nodes."""
+        dims = (3, 4, 5, 6)
+        x_dim, y_dim, z_dim, w_dim = dims
+
+        # Build a linear ramp in X so expected values are easy to predict
+        total = x_dim * y_dim * z_dim * w_dim
+        data = torch.zeros(total, dtype=torch.float32)
+        for w in range(w_dim):
+            for z in range(z_dim):
+                for y in range(y_dim):
+                    for x in range(x_dim):
+                        idx = ((w * z_dim + z) * y_dim + y) * x_dim + x
+                        data[idx] = float(x)
+        grid = CubicGrid(dims, data)
+
+        pts = torch.tensor([
+            [0.0, 0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+        ])
+        out = grid.get_interpolated(pts)
+        assert abs(out[0].item() - 0.0) < 1e-4
+        assert abs(out[1].item() - 1.0) < 1e-4
+        assert abs(out[2].item() - 2.0) < 1e-4
+
+    def test_4d_gradient_flow(self):
+        dims = (3, 4, 5, 6)
+        total = 3 * 4 * 5 * 6
+        values = torch.randn(total, requires_grad=True)
+        grid = CubicGrid(dims, values)
+
+        coords = torch.rand(10, 4)
+        result = grid.get_interpolated(coords)
+        result.sum().backward()
+
+        assert values.grad is not None
+        assert values.grad.abs().sum() > 0
 
 
 if __name__ == "__main__":

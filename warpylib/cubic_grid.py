@@ -1,19 +1,16 @@
 """
 CubicGrid - Cubic B-spline grid interpolation
 
-Replicates the functionality of WarpLib's CubicGrid.cs using torch-cubic-spline-grids.
+Replicates the functionality of WarpLib's CubicGrid.cs.
 """
 
 from enum import IntFlag
 from typing import Optional, Tuple, Union
 import torch
-from torch_cubic_spline_grids import (
-    CubicCatmullRomGrid4d
-)
 from lxml import etree
 from warpylib.interpolating_bspline import (
-    find_coefs_1d, find_coefs_2d, find_coefs_3d,
-    interpolate_grid_1d, interpolate_grid_2d, interpolate_grid_3d,
+    find_coefs_1d, find_coefs_2d, find_coefs_3d, find_coefs_4d,
+    interpolate_grid_1d, interpolate_grid_2d, interpolate_grid_3d, interpolate_grid_4d,
     EINSPLINE_BASIS_MATRIX
 )
 
@@ -91,6 +88,27 @@ class InterpolatingBSplineOperator3D:
 
         # Interpolate
         return interpolate_grid_3d(coefs, coords, matrix=EINSPLINE_BASIS_MATRIX)
+
+
+class InterpolatingBSplineOperator4D:
+    """Stateless 4D interpolating B-spline operator that preserves gradients."""
+
+    def __call__(self, data: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+        """
+        Interpolate data at given coordinates.
+
+        Args:
+            data: (C, M0, M1, M2, M3) data tensor (gradients flow through this)
+            coords: (B, 4) coordinates in [0, 1]^4
+
+        Returns:
+            values: (B, C) interpolated values
+        """
+        if data.ndim == 4:
+            data = data.unsqueeze(0)
+
+        coefs = find_coefs_4d(data)
+        return interpolate_grid_4d(coefs, coords, matrix=EINSPLINE_BASIS_MATRIX)
 
 
 class Dimension(IntFlag):
@@ -299,11 +317,11 @@ class CubicGrid:
         if self.dimension_set == DimensionSets.NONE:
             return (None, None)
 
-        # 4D case - use CubicCatmullRomGrid4d (TODO: make this an operator too)
+        # 4D case
         if self.dimension_set == DimensionSets.XYZW:
             x_dim, y_dim, z_dim, w_dim = self.dimensions
             data_torch = self.values.reshape((w_dim, z_dim, y_dim, x_dim))
-            return (CubicCatmullRomGrid4d.from_grid_data(data_torch), None)
+            return (InterpolatingBSplineOperator4D(), data_torch)
 
         x_dim, y_dim, z_dim = self.dimensions[:3]
 
@@ -347,6 +365,10 @@ class CubicGrid:
             return None
 
         # Add channel dimension if needed and compute coefficients
+        if self.dimension_set == DimensionSets.XYZW:
+            data = self._grid_data.unsqueeze(0) if self._grid_data.ndim == 4 else self._grid_data
+            return find_coefs_4d(data)
+
         if self.dimension_set == DimensionSets.XYZ:
             data = self._grid_data.unsqueeze(0) if self._grid_data.ndim == 3 else self._grid_data
             return find_coefs_3d(data)
@@ -483,18 +505,18 @@ class CubicGrid:
 
         if coefs is not None:
             # Use cached/computed coefficients with direct interpolation
-            if self.dimension_set == DimensionSets.XYZ:
+            if self.dimension_set == DimensionSets.XYZW:
+                result = interpolate_grid_4d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
+            elif self.dimension_set == DimensionSets.XYZ:
                 result = interpolate_grid_3d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
             elif self.dimension_set in (DimensionSets.XY, DimensionSets.XZ, DimensionSets.YZ):
                 result = interpolate_grid_2d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
             elif self.dimension_set in (DimensionSets.X, DimensionSets.Y, DimensionSets.Z):
                 result = interpolate_grid_1d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
             else:
-                # Fallback to operator (shouldn't happen)
                 result = self._grid_operator(self._grid_data, torch_coords).squeeze(-1)
         else:
-            # 4D case still using old module (TODO: add caching for 4D)
-            result = self._grid_operator(torch_coords).squeeze(-1)
+            result = self._grid_operator(self._grid_data, torch_coords).squeeze(-1)
 
         return result
 
