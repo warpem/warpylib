@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<TiltSeries DataDirectory="/projects/site/gred/cryoet/tegunovd/relay-empiar-10491/3" AreAnglesInverted="False" PlaneNormal="-0.16420516, 0.022072515, 0.98617923" LevelAngleX="1.457031" LevelAngleY="-5.920115" Bfactor="-16.02326" Weight="1" MagnificationCorrection="1.0062196, 0.00422745, 0.004283654, 1.0009562" UnselectFilter="False" UnselectManual="" CTFResolutionEstimate="4.8">
+<TiltSeries DataDirectory="/projects/site/gred/cryoet/tegunovd/relay-empiar-10491/3" AreAnglesInverted="False" PlaneNormal="-0.16420516, 0.022072515, 0.98617923" LevelAngleX="1.457031" LevelAngleY="-5.920115" Bfactor="-16.02326" Weight="1" MagnificationCorrection="1.0062196, 0.00422745, 0.004283654, 1.0009562" VolumeDimensionsAngstrom="3336, 4753.7998, 834" ImageDimensionsAngstrom="4803.83984, 3412.72803" UnselectFilter="False" UnselectManual="" CTFResolutionEstimate="4.8">
 	<Angles>40.01
 38
 36.01
