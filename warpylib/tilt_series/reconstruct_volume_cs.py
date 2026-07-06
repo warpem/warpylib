@@ -14,7 +14,6 @@ from .reconstruct_volume import reconstruct_full, preprocess_tilt_data
 from ..ops.rescale import rescale
 from ..ops.norm import norm
 from ..ops.filters import get_sinc2_correction_rft
-from ..euler import euler_to_matrix
 
 
 def calculate_rotated_bounding_box_z(
@@ -42,15 +41,14 @@ def calculate_rotated_bounding_box_z(
     # Get volume center coordinates
     volume_center = volume_dims_physical * 0.5
 
-    # Get Euler angles for volume center across all tilts
-    # Shape: (n_tilts, 3) in radians
-    euler_angles_all = ts.get_angle_in_all_tilts_single(coords=volume_center)
+    # Get rotation matrices for volume center across all tilts
+    # Shape: (n_tilts, 3, 3)
+    rotation_matrices_all = ts.get_rotation_matrices_in_all_tilts_single(
+        coords=volume_center
+    )
 
     # Select only the tilts we need
-    euler_angles = euler_angles_all[tilt_ids]  # (batch_size, 3)
-
-    # Convert Euler angles to rotation matrices
-    rotation_matrices = euler_to_matrix(euler_angles)  # (batch_size, 3, 3)
+    rotation_matrices = rotation_matrices_all[tilt_ids]  # (batch_size, 3, 3)
 
     # Define 8 corners of the volume bounding box (centered at origin)
     half_dims = volume_dims_physical / 2.0

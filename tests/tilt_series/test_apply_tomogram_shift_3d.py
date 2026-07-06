@@ -194,7 +194,11 @@ class TestApplyTomogramShift3D:
         """
         Test that gradients flow back through the shift tensor.
         """
-        ts = self.create_simple_tilt_series([-30.0, 0.0, 30.0])
+        # Use an asymmetric tilt scheme. With a symmetric scheme (e.g.
+        # [-30, 0, 30]) the Z->X projections cancel exactly across the +/- tilts,
+        # so d(loss)/d(shift_z) is genuinely 0 and the Z-gradient assertion below
+        # only "passed" on residual float noise from the Euler round-trip.
+        ts = self.create_simple_tilt_series([-30.0, 0.0, 45.0])
 
         # Create shift tensor with requires_grad
         shift = torch.tensor([100.0, 50.0, 25.0], requires_grad=True)

@@ -9,7 +9,7 @@ import torch
 import torch_projectors
 import mrcfile
 from typing import Optional
-from ..euler import euler_to_matrix, rotate_x
+from ..euler import rotate_x
 from ..ops import get_sinc2_correction
 
 
@@ -177,22 +177,16 @@ def reconstruct_subvolumes(
         -1, n_tilts, subtilt_patch_size, subtilt_patch_size // 2 + 1
     )
 
-    # Compute rotation matrices for each tilt
-    # These transform from volume space to image space
-    deg_to_rad = torch.pi / 180.0
-
-    # Stack Euler angles for all tilts (..., ts.n_tilts, 3)
-    euler_angles = ts.get_angle_in_all_tilts(coords=coords, angles=angles)
+    # Compute rotation matrices for each tilt (volume space -> image space)
+    # (..., ts.n_tilts, 3, 3)
+    tilt_matrices = ts.get_rotation_matrices_in_all_tilts(coords=coords, angles=angles)
 
     if effective_used_idx is not None:
-        euler_angles = euler_angles[..., effective_used_idx, :]
+        tilt_matrices = tilt_matrices[..., effective_used_idx, :, :]
 
-    # Filter Euler angles by tilt_ids if provided
+    # Filter by tilt_ids if provided
     if tilt_ids is not None:
-        euler_angles = euler_angles[..., tilt_ids, :]
-
-    # Get Euler matrices (..., n_tilts, 3, 3)
-    tilt_matrices = euler_to_matrix(euler_angles)
+        tilt_matrices = tilt_matrices[..., tilt_ids, :, :]
 
     # No shifts needed (sub-images are already centered)
     shifts = torch.zeros(n_particles, n_tilts, 2, dtype=torch.float32, device=images_rft.device)

@@ -5,7 +5,6 @@ This module contains utility methods for manipulating tilt series geometry.
 """
 
 import torch
-from ..euler import euler_to_matrix
 from . import angles
 
 
@@ -26,11 +25,10 @@ def _get_all_tilt_matrices(ts: "TiltSeries") -> torch.Tensor:
     # Sample at volume center with no particle rotation
     volume_center = (ts.volume_dimensions_physical / 2).to(device)  # (3,)
 
-    # Get Euler angles for all tilts at once
-    euler_angles = angles.get_angle_in_all_tilts_single(ts, volume_center, angles=None)  # (n_tilts, 3)
-
-    # Convert to rotation matrices
-    tilt_matrices = euler_to_matrix(euler_angles)  # (n_tilts, 3, 3)
+    # Get rotation matrices for all tilts at once: (n_tilts, 3, 3)
+    tilt_matrices = angles.get_rotation_matrices_in_all_tilts_single(
+        ts, volume_center, angles=None
+    )
 
     return tilt_matrices
 
@@ -53,11 +51,10 @@ def _get_tilt_matrix(ts: "TiltSeries", tilt_id: int) -> torch.Tensor:
     # Sample at volume center with no particle rotation
     volume_center = (ts.volume_dimensions_physical / 2).unsqueeze(0).to(device)  # (1, 3)
 
-    # Get Euler angles from the canonical geometry model
-    euler_angles = angles.get_angles_in_one_tilt(ts, volume_center, tilt_id, angles=None)  # (1, 3)
-
-    # Convert to rotation matrix
-    tilt_matrix = euler_to_matrix(euler_angles).squeeze(0)  # (3, 3)
+    # Get rotation matrix from the canonical geometry model
+    tilt_matrix = angles.get_rotation_matrix_in_one_tilt(
+        ts, volume_center, tilt_id, angles=None
+    ).squeeze(0)  # (3, 3)
 
     return tilt_matrix
 

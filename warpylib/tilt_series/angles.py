@@ -42,16 +42,22 @@ def get_angle_in_all_tilts_single(
     return get_angle_in_all_tilts(ts, per_tilt_coords, per_tilt_angles)
 
 
-def get_angle_in_all_tilts(
+def get_rotation_matrices_in_all_tilts(
     ts: "TiltSeries", coords: torch.Tensor, angles: torch.Tensor = None
 ) -> torch.Tensor:
     """
-    Get Euler angles for coordinates across all tilts.
+    Get rotation matrices for coordinates across all tilts.
 
-    This method computes the orientation (as Euler angles) that results from
-    the tilt geometry and any spatially varying angle corrections from the
+    This method computes the orientation (as rotation matrices) that results
+    from the tilt geometry and any spatially varying angle corrections from the
     grid_angle_x/y/z grids. Optionally applies an additional particle rotation
     if angles are provided.
+
+    Rotation matrices are the native representation of the geometric model here;
+    prefer this over ``get_angle_in_all_tilts`` when you need matrices (e.g. for
+    backprojection). It avoids the matrix -> Euler -> matrix round-trip, which is
+    both redundant and non-differentiable at the gimbal-lock boundary (tilt at 0
+    degrees), so gradients w.r.t. the tilt geometry stay exact.
 
     Args:
         ts: TiltSeries instance
@@ -62,7 +68,7 @@ def get_angle_in_all_tilts(
                after the tilt geometry transformations.
 
     Returns:
-        Euler angles in radians (ZYZ convention), shape (..., n_tilts, 3)
+        Rotation matrices, shape (..., n_tilts, 3, 3)
     """
     # Get device from TiltSeries
     device = ts.angles.device
@@ -177,31 +183,88 @@ def get_angle_in_all_tilts(
         # Apply particle rotation: rotation_matrices @ particle_matrices
         rotation_matrices = torch.matmul(rotation_matrices, particle_matrices)
 
-    # Extract Euler angles from rotation matrices
-    # Flatten to (n_particles * n_tilts, 3, 3)
-    rotation_matrices_flat = rotation_matrices.reshape(-1, 3, 3)
-
-    # Convert to Euler angles: (n_particles * n_tilts, 3)
-    result_flat = matrix_to_euler(rotation_matrices_flat)
-
-    # Reshape to (n_particles, n_tilts, 3)
-    result = result_flat.reshape(n_particles, ts.n_tilts, 3)
-
-    # Reshape back to original batch shape
-    result = result.reshape(*batch_shape, ts.n_tilts, 3)
-
-    return result
+    # Reshape (n_particles, n_tilts, 3, 3) back to original batch shape
+    return rotation_matrices.reshape(*batch_shape, ts.n_tilts, 3, 3)
 
 
-def get_angles_in_one_tilt(
+def get_angle_in_all_tilts(
+    ts: "TiltSeries", coords: torch.Tensor, angles: torch.Tensor = None
+) -> torch.Tensor:
+    """
+    Get Euler angles for coordinates across all tilts.
+
+    This method computes the orientation (as Euler angles) that results from
+    the tilt geometry and any spatially varying angle corrections from the
+    grid_angle_x/y/z grids. Optionally applies an additional particle rotation
+    if angles are provided.
+
+    This is a thin wrapper around ``get_rotation_matrices_in_all_tilts`` that
+    converts the rotation matrices to Euler angles. If you only need matrices
+    (e.g. for backprojection), call that function directly to avoid the
+    conversion and keep gradients exact at the gimbal-lock boundary.
+
+    Args:
+        ts: TiltSeries instance
+        coords: Input coordinates in volume space (Angstroms), shape (..., n_tilts, 3)
+               where ... represents arbitrary batch dimensions
+        angles: Optional particle Euler angles in radians (ZYZ convention),
+               shape (..., n_tilts, 3). If provided, these rotations are applied
+               after the tilt geometry transformations.
+
+    Returns:
+        Euler angles in radians (ZYZ convention), shape (..., n_tilts, 3)
+    """
+    rotation_matrices = get_rotation_matrices_in_all_tilts(ts, coords, angles)
+    batch_shape = rotation_matrices.shape[:-2]
+    euler_angles = matrix_to_euler(rotation_matrices.reshape(-1, 3, 3))
+    return euler_angles.reshape(*batch_shape, 3)
+
+
+def get_rotation_matrices_in_all_tilts_single(
+    ts: "TiltSeries", coords: torch.Tensor, angles: torch.Tensor = None
+) -> torch.Tensor:
+    """
+    Get rotation matrices for coordinates across all tilts.
+
+    Matrix-returning counterpart of ``get_angle_in_all_tilts_single``:
+    replicates coordinates for each tilt and calls the main rotation matrix
+    method. Optionally applies an additional particle rotation if angles are
+    provided.
+
+    Args:
+        ts: TiltSeries instance
+        coords: Coordinates in volume space (Angstroms), shape (..., 3)
+               where ... represents arbitrary batch dimensions
+        angles: Optional particle Euler angles in radians (ZYZ convention),
+               shape (..., 3). If provided, these rotations are applied
+               after the tilt geometry transformations.
+
+    Returns:
+        Rotation matrices for all tilts, shape (..., n_tilts, 3, 3)
+    """
+    # Replicate coordinates for each tilt: (..., 3) -> (..., n_tilts, 3)
+    per_tilt_coords = coords.unsqueeze(-2).expand(*coords.shape[:-1], ts.n_tilts, 3)
+
+    # Replicate angles if provided: (..., 3) -> (..., n_tilts, 3)
+    per_tilt_angles = None
+    if angles is not None:
+        per_tilt_angles = angles.unsqueeze(-2).expand(*angles.shape[:-1], ts.n_tilts, 3)
+
+    return get_rotation_matrices_in_all_tilts(ts, per_tilt_coords, per_tilt_angles)
+
+
+def get_rotation_matrix_in_one_tilt(
     ts: "TiltSeries", coords: torch.Tensor, tilt_id: int, angles: torch.Tensor = None
 ) -> torch.Tensor:
     """
-    Get particle Euler angles for a specific tilt.
+    Get particle rotation matrices for a specific tilt.
 
-    More efficient than get_angle_in_all_tilts when you only need
-    results for one tilt. Optionally applies an additional particle rotation
-    if angles are provided.
+    Matrix-returning counterpart of ``get_angles_in_one_tilt``. More efficient
+    than ``get_rotation_matrices_in_all_tilts`` when you only need one tilt.
+    Optionally applies an additional particle rotation if angles are provided.
+    Prefer this over ``get_angles_in_one_tilt`` when you need matrices: it avoids
+    the matrix -> Euler -> matrix round-trip and keeps gradients exact at the
+    gimbal-lock boundary (tilt at 0 degrees).
 
     Args:
         ts: TiltSeries instance
@@ -211,7 +274,7 @@ def get_angles_in_one_tilt(
                If provided, these rotations are applied after the tilt geometry transformations.
 
     Returns:
-        Transformed Euler angles, shape (N, 3) in radians (ZYZ convention)
+        Rotation matrices, shape (N, 3, 3)
     """
     if tilt_id < 0 or tilt_id >= ts.n_tilts:
         raise ValueError(f"tilt_id must be between 0 and {ts.n_tilts-1}, got {tilt_id}")
@@ -288,7 +351,33 @@ def get_angles_in_one_tilt(
         # Apply particle rotation: rotation_matrices @ particle_matrices
         rotation_matrices = torch.matmul(rotation_matrices, particle_matrices)
 
-    # Extract Euler angles from rotation matrices: (n_coords, 3)
-    result = matrix_to_euler(rotation_matrices)
+    return rotation_matrices
 
-    return result
+
+def get_angles_in_one_tilt(
+    ts: "TiltSeries", coords: torch.Tensor, tilt_id: int, angles: torch.Tensor = None
+) -> torch.Tensor:
+    """
+    Get particle Euler angles for a specific tilt.
+
+    More efficient than get_angle_in_all_tilts when you only need
+    results for one tilt. Optionally applies an additional particle rotation
+    if angles are provided.
+
+    This is a thin wrapper around ``get_rotation_matrix_in_one_tilt`` that
+    converts the rotation matrices to Euler angles. If you only need matrices,
+    call that function directly to avoid the conversion and keep gradients exact
+    at the gimbal-lock boundary.
+
+    Args:
+        ts: TiltSeries instance
+        coords: Input coordinates in volume space (Angstroms), shape (N, 3)
+        tilt_id: Index of the tilt (0 to n_tilts-1)
+        angles: Optional particle Euler angles in radians (ZYZ convention), shape (N, 3).
+               If provided, these rotations are applied after the tilt geometry transformations.
+
+    Returns:
+        Transformed Euler angles, shape (N, 3) in radians (ZYZ convention)
+    """
+    rotation_matrices = get_rotation_matrix_in_one_tilt(ts, coords, tilt_id, angles)
+    return matrix_to_euler(rotation_matrices)
