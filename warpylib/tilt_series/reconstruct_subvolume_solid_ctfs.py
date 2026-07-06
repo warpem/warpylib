@@ -15,7 +15,6 @@ import torch_projectors
 import mrcfile
 from typing import Optional
 from ..ctf import CTF
-from ..euler import euler_to_matrix
 from ..ops import resize_ft
 
 
@@ -183,12 +182,11 @@ def reconstruct_subvolume_solid_ctfs(
     if not apply_ctf:
         ctfs = ctfs.make_flat()
 
-    euler_angles = ts.get_angle_in_all_tilts(coords=coords, angles=angles)
-
-    # Convert Euler angles to rotation matrices for proper interpolation
-    # (Euler angles can have multiple equivalent representations, so interpolating
-    # them directly doesn't work reliably)
-    rotation_matrices = euler_to_matrix(euler_angles)  # (..., n_tilts, 3, 3)
+    # Rotation matrices are the native representation and interpolate reliably
+    # (unlike Euler angles, which have multiple equivalent representations)
+    rotation_matrices = ts.get_rotation_matrices_in_all_tilts(
+        coords=coords, angles=angles
+    )  # (..., n_tilts, 3, 3)
 
     # Build lists of all tilt data (original + interpolated)
     all_rotation_matrices = []

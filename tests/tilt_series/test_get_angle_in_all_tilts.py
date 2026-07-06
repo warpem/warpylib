@@ -422,5 +422,80 @@ class TestGetAngleInAllTilts:
         assert torch.allclose(result3, result4)
 
 
+class TestGetRotationMatrices:
+    """Test the rotation-matrix methods and their equivalence to the Euler ones.
+
+    The get_angle_* methods are thin wrappers that convert these matrices to
+    Euler angles, so euler == matrix_to_euler(matrix) must hold exactly.
+    """
+
+    def _make_ts(self):
+        ts = TiltSeries(n_tilts=3)
+        ts.angles = torch.tensor([-30.0, 0.0, 30.0])  # includes a 0-deg tilt
+        ts.tilt_axis_angles = torch.tensor([84.0, 84.0, 84.0])
+        ts.dose = torch.tensor([0.0, 50.0, 100.0])
+        ts.volume_dimensions_physical = torch.tensor([100.0, 100.0, 50.0])
+        ts.image_dimensions_physical = torch.tensor([100.0, 100.0])
+        return ts
+
+    def test_all_tilts_matches_euler(self):
+        ts = self._make_ts()
+        coords = torch.tensor([[50.0, 50.0, 25.0]] * 3)
+
+        matrices = ts.get_rotation_matrices_in_all_tilts(coords)
+        euler = ts.get_angle_in_all_tilts(coords)
+
+        assert matrices.shape == (3, 3, 3)
+        assert torch.allclose(matrix_to_euler(matrices), euler, atol=1e-5)
+        assert torch.allclose(euler_to_matrix(euler), matrices, atol=1e-5)
+
+    def test_all_tilts_single_matches_euler(self):
+        ts = self._make_ts()
+        coord = torch.tensor([50.0, 50.0, 25.0])
+
+        matrices = ts.get_rotation_matrices_in_all_tilts_single(coord)
+        euler = ts.get_angle_in_all_tilts_single(coord)
+
+        assert matrices.shape == (3, 3, 3)
+        assert torch.allclose(matrix_to_euler(matrices), euler, atol=1e-5)
+
+    def test_one_tilt_matches_euler(self):
+        ts = self._make_ts()
+        coords = torch.tensor([[50.0, 50.0, 25.0], [40.0, 60.0, 25.0]])
+
+        matrices = ts.get_rotation_matrix_in_one_tilt(coords, tilt_id=1)
+        euler = ts.get_angles_in_one_tilt(coords, tilt_id=1)
+
+        assert matrices.shape == (2, 3, 3)
+        assert torch.allclose(matrix_to_euler(matrices), euler, atol=1e-5)
+
+    def test_matrices_are_valid_rotations(self):
+        ts = self._make_ts()
+        coords = torch.tensor([[50.0, 50.0, 25.0]] * 3)
+
+        matrices = ts.get_rotation_matrices_in_all_tilts(coords)
+        for i in range(3):
+            mat = matrices[i]
+            assert torch.allclose(torch.det(mat), torch.tensor(1.0), atol=1e-5)
+            assert torch.allclose(torch.matmul(mat.T, mat), torch.eye(3), atol=1e-5)
+
+    def test_gradient_finite_at_gimbal_lock(self):
+        """Gradient w.r.t. the tilt-axis angle is finite through the matrix path.
+
+        The 0-deg tilt is a gimbal-lock point for the Euler chart; the matrix
+        path never converts to Euler, so no eps regularization is relied upon.
+        """
+        ts = self._make_ts()
+        coords = torch.tensor([[50.0, 50.0, 25.0]] * 3)
+
+        delta = torch.zeros(1, requires_grad=True)
+        ts.tilt_axis_angles = ts.tilt_axis_angles + delta
+        matrices = ts.get_rotation_matrices_in_all_tilts(coords)
+        matrices.pow(2).sum().backward()
+
+        assert delta.grad is not None
+        assert torch.isfinite(delta.grad).all()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

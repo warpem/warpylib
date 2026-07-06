@@ -38,6 +38,14 @@ TiltSeries.get_angle_in_all_tilts_single = angles.get_angle_in_all_tilts_single
 TiltSeries.get_angle_in_all_tilts = angles.get_angle_in_all_tilts
 TiltSeries.get_angles_in_one_tilt = angles.get_angles_in_one_tilt
 
+# Bind rotation-matrix transformation methods to TiltSeries (native, avoid the
+# Euler round-trip used by the get_angle_* wrappers above)
+TiltSeries.get_rotation_matrices_in_all_tilts_single = (
+    angles.get_rotation_matrices_in_all_tilts_single
+)
+TiltSeries.get_rotation_matrices_in_all_tilts = angles.get_rotation_matrices_in_all_tilts
+TiltSeries.get_rotation_matrix_in_one_tilt = angles.get_rotation_matrix_in_one_tilt
+
 # Bind CTF generation methods to TiltSeries
 TiltSeries.get_ctfs_for_particles_single = ctf.get_ctfs_for_particles_single
 TiltSeries.get_ctfs_for_particles = ctf.get_ctfs_for_particles

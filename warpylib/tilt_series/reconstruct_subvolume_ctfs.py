@@ -11,7 +11,7 @@ import torch
 import torch_projectors
 import mrcfile
 from typing import Optional
-from ..euler import euler_to_matrix, rotate_x
+from ..euler import rotate_x
 from ..ops import resize_ft
 
 
@@ -136,19 +136,13 @@ def reconstruct_subvolume_ctfs(
         -1, n_tilts, ctf_patch_size, ctf_patch_size // 2 + 1
     )
 
-    # Compute rotation matrices for each tilt
-    # These transform from volume space to image space
-    deg_to_rad = torch.pi / 180.0
+    # Compute rotation matrices for each tilt (volume space -> image space)
+    # (..., n_tilts, 3, 3)
+    tilt_matrices = ts.get_rotation_matrices_in_all_tilts(coords=coords, angles=angles)
 
-    # Stack Euler angles for all tilts (..., n_tilts, 3)
-    euler_angles = ts.get_angle_in_all_tilts(coords=coords, angles=angles)
-
-    # Filter Euler angles by tilt_ids if provided
+    # Filter by tilt_ids if provided
     if tilt_ids is not None:
-        euler_angles = euler_angles[..., tilt_ids, :]
-
-    # Get Euler matrices (..., n_tilts, 3, 3)
-    tilt_matrices = euler_to_matrix(euler_angles)
+        tilt_matrices = tilt_matrices[..., tilt_ids, :, :]
 
     # No shifts needed for CTF backprojection
     shifts = torch.zeros(n_particles, n_tilts, 2, dtype=torch.float32, device=coords.device)
