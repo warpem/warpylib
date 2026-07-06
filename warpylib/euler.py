@@ -95,7 +95,11 @@ def matrix_to_euler(matrices: torch.Tensor) -> torch.Tensor:
     m32 = matrices[..., 2, 1]
     m33 = matrices[..., 2, 2]
 
-    abs_sb = torch.sqrt(m13 ** 2 + m23 ** 2)
+    # Epsilon inside the sqrt keeps the gradient finite at the gimbal-lock
+    # boundary (sin(beta) = 0). Without it, sqrt's derivative is infinite when
+    # m13 = m23 = 0 and the backward pass returns NaN. This boundary is hit
+    # whenever a tilt is at 0 degrees, which is common in tilt-series geometry.
+    abs_sb = torch.sqrt(m13 ** 2 + m23 ** 2 + 1e-12)
 
     # Threshold for numerical stability
     epsilon = 16 * 1.192092896e-07

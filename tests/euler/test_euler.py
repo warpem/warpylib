@@ -274,6 +274,32 @@ class TestGradients:
 
         assert angles_in.grad is not None
 
+    def test_matrix_to_euler_gradient_at_gimbal_lock(self):
+        """Gradient is finite for a batch containing a tilt at beta = 0.
+
+        At the gimbal-lock boundary abs_sb = sqrt(m13**2 + m23**2) is evaluated
+        at zero, where sqrt has an infinite derivative. When the batch also
+        contains non-singular entries the shared sqrt runs its backward pass, and
+        the masked 0/0 at the singular entry returns NaN, poisoning the whole
+        batch. This mirrors tilt-series reconstruction, where matrix_to_euler is
+        called on all tilts at once and one tilt is typically at 0 degrees. The
+        NaN otherwise propagates to any parameter feeding the rotation (e.g. the
+        tilt-axis angle during alignment).
+        """
+        # Batch of a normal tilt and a singular one (beta = 0 -> m13 = m23 = 0)
+        angles_in = torch.tensor(
+            [[0.5, 0.3, 0.2], [0.5, 0.0, 0.2]], requires_grad=True
+        )
+
+        matrix = euler_to_matrix(angles_in)
+        angles_out = matrix_to_euler(matrix)
+
+        loss = angles_out.sum()
+        loss.backward()
+
+        assert angles_in.grad is not None
+        assert torch.isfinite(angles_in.grad).all()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
