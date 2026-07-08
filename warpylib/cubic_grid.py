@@ -131,6 +131,15 @@ class DimensionSets(IntFlag):
     YZ = 1 << 6
     XYZ = 1 << 7
     XYZW = 1 << 8  # 4D case
+    # 4D grids with a degenerate spatial axis (size 1) but an active W axis:
+    # the W axis still carries real data and cannot be dropped like a true
+    # size-1 axis, so these need their own dispatch (see _get_dimensions).
+    XW = 1 << 9
+    YW = 1 << 10
+    ZW = 1 << 11
+    XYW = 1 << 12
+    XZW = 1 << 13
+    YZW = 1 << 14
 
 
 class CubicGrid:
@@ -219,10 +228,27 @@ class CubicGrid:
         """Determine which dimensions are active (>1)"""
         if len(dims) == 4:
             x, y, z, w = dims
-            if x > 1 and y > 1 and z > 1 and w > 1:
-                return DimensionSets.XYZW
-            # For now, we only support full 4D or treat as 3D
-            # Fall through to 3D handling
+            if w > 1:
+                # W carries real data and can't be dropped like a degenerate
+                # spatial axis, so any spatial axis may independently be
+                # degenerate while W stays active.
+                if x > 1 and y > 1 and z > 1:
+                    return DimensionSets.XYZW
+                if x > 1 and y > 1:
+                    return DimensionSets.XYW
+                if x > 1 and z > 1:
+                    return DimensionSets.XZW
+                if y > 1 and z > 1:
+                    return DimensionSets.YZW
+                if x > 1:
+                    return DimensionSets.XW
+                if y > 1:
+                    return DimensionSets.YW
+                if z > 1:
+                    return DimensionSets.ZW
+                return DimensionSets.W
+            # W is degenerate (size 1), so dropping it doesn't change the
+            # total element count. Fall through to 3D handling.
             dims = dims[:3]
 
         x, y, z = dims[:3]
@@ -324,9 +350,35 @@ class CubicGrid:
             return (InterpolatingBSplineOperator4D(), data_torch)
 
         x_dim, y_dim, z_dim = self.dimensions[:3]
+        w_dim = self.dimensions[3] if len(self.dimensions) == 4 else None
+
+        # 4D cases with a degenerate spatial axis but active W
+        if self.dimension_set == DimensionSets.XYW:
+            data_torch = self.values.reshape((w_dim, y_dim, x_dim))
+            return (InterpolatingBSplineOperator3D(), data_torch)
+
+        elif self.dimension_set == DimensionSets.XZW:
+            data_torch = self.values.reshape((w_dim, z_dim, x_dim))
+            return (InterpolatingBSplineOperator3D(), data_torch)
+
+        elif self.dimension_set == DimensionSets.YZW:
+            data_torch = self.values.reshape((w_dim, z_dim, y_dim))
+            return (InterpolatingBSplineOperator3D(), data_torch)
+
+        elif self.dimension_set == DimensionSets.XW:
+            data_torch = self.values.reshape((w_dim, x_dim))
+            return (InterpolatingBSplineOperator2D(), data_torch)
+
+        elif self.dimension_set == DimensionSets.YW:
+            data_torch = self.values.reshape((w_dim, y_dim))
+            return (InterpolatingBSplineOperator2D(), data_torch)
+
+        elif self.dimension_set == DimensionSets.ZW:
+            data_torch = self.values.reshape((w_dim, z_dim))
+            return (InterpolatingBSplineOperator2D(), data_torch)
 
         # 3D case
-        if self.dimension_set == DimensionSets.XYZ:
+        elif self.dimension_set == DimensionSets.XYZ:
             data_torch = self.values.reshape((z_dim, y_dim, x_dim))
             return (InterpolatingBSplineOperator3D(), data_torch)
 
@@ -344,13 +396,17 @@ class CubicGrid:
             return (InterpolatingBSplineOperator2D(), data_torch)
 
         # 1D cases
-        elif self.dimension_set in (DimensionSets.X, DimensionSets.Y, DimensionSets.Z):
+        elif self.dimension_set in (
+            DimensionSets.X, DimensionSets.Y, DimensionSets.Z, DimensionSets.W
+        ):
             if self.dimension_set == DimensionSets.X:
                 data_torch = self.values.reshape(x_dim)
             elif self.dimension_set == DimensionSets.Y:
                 data_torch = self.values.reshape(y_dim)
-            else:  # Z
+            elif self.dimension_set == DimensionSets.Z:
                 data_torch = self.values.reshape(z_dim)
+            else:  # W
+                data_torch = self.values.reshape(w_dim)
             return (InterpolatingBSplineOperator1D(), data_torch)
 
         return (None, None)
@@ -369,15 +425,22 @@ class CubicGrid:
             data = self._grid_data.unsqueeze(0) if self._grid_data.ndim == 4 else self._grid_data
             return find_coefs_4d(data)
 
-        if self.dimension_set == DimensionSets.XYZ:
+        if self.dimension_set in (
+            DimensionSets.XYZ, DimensionSets.XYW, DimensionSets.XZW, DimensionSets.YZW
+        ):
             data = self._grid_data.unsqueeze(0) if self._grid_data.ndim == 3 else self._grid_data
             return find_coefs_3d(data)
 
-        elif self.dimension_set in (DimensionSets.XY, DimensionSets.XZ, DimensionSets.YZ):
+        elif self.dimension_set in (
+            DimensionSets.XY, DimensionSets.XZ, DimensionSets.YZ,
+            DimensionSets.XW, DimensionSets.YW, DimensionSets.ZW,
+        ):
             data = self._grid_data.unsqueeze(0) if self._grid_data.ndim == 2 else self._grid_data
             return find_coefs_2d(data)
 
-        elif self.dimension_set in (DimensionSets.X, DimensionSets.Y, DimensionSets.Z):
+        elif self.dimension_set in (
+            DimensionSets.X, DimensionSets.Y, DimensionSets.Z, DimensionSets.W
+        ):
             data = self._grid_data.unsqueeze(0) if self._grid_data.ndim == 1 else self._grid_data
             return find_coefs_1d(data)
 
@@ -437,6 +500,33 @@ class CubicGrid:
         if self.dimension_set == DimensionSets.XYZW:
             # Swap (x,y,z,w) -> (w,z,y,x)
             torch_coords = coords_transformed[:, [3, 2, 1, 0]]
+
+        elif self.dimension_set == DimensionSets.XYW:
+            # 4D with degenerate Z: (x,y,z,w) -> (w,y,x)
+            torch_coords = coords_transformed[:, [3, 1, 0]]
+
+        elif self.dimension_set == DimensionSets.XZW:
+            # 4D with degenerate Y: (x,y,z,w) -> (w,z,x)
+            torch_coords = coords_transformed[:, [3, 2, 0]]
+
+        elif self.dimension_set == DimensionSets.YZW:
+            # 4D with degenerate X: (x,y,z,w) -> (w,z,y)
+            torch_coords = coords_transformed[:, [3, 2, 1]]
+
+        elif self.dimension_set == DimensionSets.XW:
+            # 4D with only X and W active: (x,y,z,w) -> (w,x)
+            torch_coords = coords_transformed[:, [3, 0]]
+
+        elif self.dimension_set == DimensionSets.YW:
+            # 4D with only Y and W active: (x,y,z,w) -> (w,y)
+            torch_coords = coords_transformed[:, [3, 1]]
+
+        elif self.dimension_set == DimensionSets.ZW:
+            # 4D with only Z and W active: (x,y,z,w) -> (w,z)
+            torch_coords = coords_transformed[:, [3, 2]]
+
+        elif self.dimension_set == DimensionSets.W:
+            torch_coords = coords_transformed[:, [3]]
 
         elif self.dimension_set == DimensionSets.XYZ:
             # Swap (x,y,z) -> (z,y,x)
@@ -507,11 +597,18 @@ class CubicGrid:
             # Use cached/computed coefficients with direct interpolation
             if self.dimension_set == DimensionSets.XYZW:
                 result = interpolate_grid_4d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
-            elif self.dimension_set == DimensionSets.XYZ:
+            elif self.dimension_set in (
+                DimensionSets.XYZ, DimensionSets.XYW, DimensionSets.XZW, DimensionSets.YZW
+            ):
                 result = interpolate_grid_3d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
-            elif self.dimension_set in (DimensionSets.XY, DimensionSets.XZ, DimensionSets.YZ):
+            elif self.dimension_set in (
+                DimensionSets.XY, DimensionSets.XZ, DimensionSets.YZ,
+                DimensionSets.XW, DimensionSets.YW, DimensionSets.ZW,
+            ):
                 result = interpolate_grid_2d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
-            elif self.dimension_set in (DimensionSets.X, DimensionSets.Y, DimensionSets.Z):
+            elif self.dimension_set in (
+                DimensionSets.X, DimensionSets.Y, DimensionSets.Z, DimensionSets.W
+            ):
                 result = interpolate_grid_1d(coefs, torch_coords, matrix=EINSPLINE_BASIS_MATRIX).squeeze(-1)
             else:
                 result = self._grid_operator(self._grid_data, torch_coords).squeeze(-1)

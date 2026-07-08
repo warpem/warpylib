@@ -225,6 +225,41 @@ class TestCubicGridOperations:
         assert new_grid.dimensions == (3, 3, 2, 10)
         assert len(new_grid.values) == 3 * 3 * 2 * 10
 
+    @pytest.mark.parametrize(
+        "new_size,expected_dimension_set",
+        [
+            ((2, 3, 1, 34), DimensionSets.XYW),
+            ((2, 1, 3, 34), DimensionSets.XZW),
+            ((1, 2, 3, 34), DimensionSets.YZW),
+            ((2, 1, 1, 34), DimensionSets.XW),
+            ((1, 2, 1, 34), DimensionSets.YW),
+            ((1, 1, 2, 34), DimensionSets.ZW),
+            ((1, 1, 1, 34), DimensionSets.W),
+        ],
+    )
+    def test_resize_4d_degenerate_spatial_axis(self, new_size, expected_dimension_set):
+        """Test resizing 4D grids with a degenerate (size 1) spatial axis but
+        an active W axis, e.g. a volume-warp grid with nz=1."""
+        grid = CubicGrid((1, 1, 1, 1))
+
+        new_grid = grid.resize(new_size)
+        assert new_grid.dimensions == new_size
+        total = 1
+        for d in new_size:
+            total *= d
+        assert len(new_grid.values) == total
+        assert new_grid.dimension_set == expected_dimension_set
+
+        # interpolation and gradient flow must work through the resampled grid
+        coords = torch.rand(5, 4)
+        values = new_grid.get_interpolated(coords)
+        assert values.shape == (5,)
+
+        leaf = new_grid.values.clone().requires_grad_(True)
+        grad_grid = CubicGrid(new_grid.dimensions, leaf)
+        grad_grid.get_interpolated(coords).sum().backward()
+        assert leaf.grad is not None
+
     def test_collapse_xy(self):
         """Test collapsing XY dimensions"""
         dims = (3, 4, 5)
