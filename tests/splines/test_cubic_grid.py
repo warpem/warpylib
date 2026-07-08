@@ -217,6 +217,14 @@ class TestCubicGridOperations:
         assert new_grid.dimensions == (5, 6, 1)
         assert len(new_grid.values) == 5 * 6
 
+    def test_resize_4d(self):
+        """Test grid resizing for 4D (X, Y, Z, W) grids"""
+        grid = CubicGrid((1, 1, 1, 1))
+
+        new_grid = grid.resize((3, 3, 2, 10))
+        assert new_grid.dimensions == (3, 3, 2, 10)
+        assert len(new_grid.values) == 3 * 3 * 2 * 10
+
     def test_collapse_xy(self):
         """Test collapsing XY dimensions"""
         dims = (3, 4, 5)

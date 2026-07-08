@@ -562,32 +562,52 @@ class CubicGrid:
 
         return self.get_interpolated(coords)
 
-    def resize(self, new_size: Tuple[int, int, int]) -> "CubicGrid":
+    def resize(
+        self, new_size: Union[Tuple[int, int, int], Tuple[int, int, int, int]]
+    ) -> "CubicGrid":
         """
         Resize grid by resampling at new resolution.
 
         Args:
-            new_size: (X, Y, Z) new dimensions
+            new_size: (X, Y, Z) or (X, Y, Z, W) new dimensions
 
         Returns:
             New CubicGrid with resampled values
         """
-        nx, ny, nz = new_size
-
-        step_x = 1.0 / max(1, nx - 1)
-        step_y = 1.0 / max(1, ny - 1)
-        step_z = 1.0 / max(1, nz - 1)
-
-        # Generate coordinates
         total_size = int(torch.tensor(new_size).prod().item())
         result = torch.zeros(total_size, dtype=torch.float32)
         idx = 0
-        for z in range(nz):
-            for y in range(ny):
-                for x in range(nx):
-                    coord = torch.tensor([[x * step_x, y * step_y, z * step_z]])
-                    result[idx] = self.get_interpolated(coord)[0]
-                    idx += 1
+
+        if len(new_size) == 4:
+            nx, ny, nz, nw = new_size
+
+            step_x = 1.0 / max(1, nx - 1)
+            step_y = 1.0 / max(1, ny - 1)
+            step_z = 1.0 / max(1, nz - 1)
+            step_w = 1.0 / max(1, nw - 1)
+
+            for w in range(nw):
+                for z in range(nz):
+                    for y in range(ny):
+                        for x in range(nx):
+                            coord = torch.tensor(
+                                [[x * step_x, y * step_y, z * step_z, w * step_w]]
+                            )
+                            result[idx] = self.get_interpolated(coord)[0]
+                            idx += 1
+        else:
+            nx, ny, nz = new_size
+
+            step_x = 1.0 / max(1, nx - 1)
+            step_y = 1.0 / max(1, ny - 1)
+            step_z = 1.0 / max(1, nz - 1)
+
+            for z in range(nz):
+                for y in range(ny):
+                    for x in range(nx):
+                        coord = torch.tensor([[x * step_x, y * step_y, z * step_z]])
+                        result[idx] = self.get_interpolated(coord)[0]
+                        idx += 1
 
         # Preserve margins if any were set
         has_margins = any(m > 0 for m in self.margins)
