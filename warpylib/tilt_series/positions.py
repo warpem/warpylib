@@ -104,6 +104,13 @@ def get_positions_in_one_tilt(ts: "TiltSeries", coords: torch.Tensor, tilt_id: i
 
         centered = centered + sample_warping
 
+        # Get movement corrections (sampled in volume space, same grid as defocus)
+        movement_x = ts.grid_movement_x.get_interpolated(grid_coords.unsqueeze(0))[0]
+        movement_y = ts.grid_movement_y.get_interpolated(grid_coords.unsqueeze(0))[0]
+
+        centered[0] = centered[0] + movement_x
+        centered[1] = centered[1] + movement_y
+
         # Apply tilt rotation
         transformed = torch.matmul(tilt_matrix, centered)
 
@@ -114,21 +121,6 @@ def get_positions_in_one_tilt(ts: "TiltSeries", coords: torch.Tensor, tilt_id: i
         # Add image center
         transformed[0] += image_center[0]
         transformed[1] += image_center[1]
-
-        # Prepare grid coordinates for movement grids
-        transformed_coords = torch.tensor([
-            transformed[0] / ts.image_dimensions_physical[0],
-            transformed[1] / ts.image_dimensions_physical[1],
-            tilt_id * grid_step
-        ], dtype=torch.float32).unsqueeze(0)  # (1, 3)
-
-        # Get movement corrections
-        movement_x = ts.grid_movement_x.get_interpolated(transformed_coords)[0]
-        movement_y = ts.grid_movement_y.get_interpolated(transformed_coords)[0]
-
-        # Apply movement corrections
-        transformed[0] -= movement_x
-        transformed[1] -= movement_y
 
         # Get defocus and convert Z (Angstroms to micrometers: 1e-4)
         defocus = ts.grid_ctf_defocus.get_interpolated(grid_coords.unsqueeze(0))[0]
@@ -280,6 +272,25 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
     # Apply volume warping: (n_particles, n_tilts, 3)
     centered = centered + volume_warp
 
+    # Get movement corrections (sampled in volume space, same grid as defocus)
+    # Shape: (n_particles, n_tilts, 3) -> (X, Y, tilt_index)
+    tilt_grid_indices = tilt_indices.unsqueeze(0).expand(n_particles, -1)  # (n_particles, n_tilts)
+    movement_grid_coords = torch.stack([
+        normalized_coords[..., 0],
+        normalized_coords[..., 1],
+        tilt_grid_indices
+    ], dim=-1)  # (n_particles, n_tilts, 3)
+
+    movement_grid_coords_flat = movement_grid_coords.reshape(-1, 3)
+    grid_movement_x_interp = ts.grid_movement_x.get_interpolated(movement_grid_coords_flat)
+    grid_movement_y_interp = ts.grid_movement_y.get_interpolated(movement_grid_coords_flat)
+
+    movement_x = grid_movement_x_interp.reshape(n_particles, ts.n_tilts)
+    movement_y = grid_movement_y_interp.reshape(n_particles, ts.n_tilts)
+
+    centered[..., 0] = centered[..., 0] + movement_x
+    centered[..., 1] = centered[..., 1] + movement_y
+
     # Apply tilt rotation using batch matrix multiplication
     # tilt_matrices: (n_tilts, 3, 3)
     # centered: (n_particles, n_tilts, 3)
@@ -311,30 +322,6 @@ def get_position_in_all_tilts(ts: "TiltSeries", coords: torch.Tensor) -> torch.T
         centered_flipped[..., 2] *= -1
         transformed_flipped = torch.einsum('tji,pti->ptj', tilt_matrices_flipped, centered_flipped)
         transformed[..., 2] = transformed_flipped[..., 2]
-
-    # Prepare grid coordinates for movement grids (3D: X, Y, tilt_index)
-    # Shape: (n_particles, n_tilts, 3)
-    tilt_grid_indices = tilt_indices.unsqueeze(0).expand(n_particles, -1)  # (n_particles, n_tilts)
-    transformed_grid_coords = torch.stack([
-        transformed[..., 0] / ts.image_dimensions_physical[0],
-        transformed[..., 1] / ts.image_dimensions_physical[1],
-        tilt_grid_indices
-    ], dim=-1)  # (n_particles, n_tilts, 3)
-
-    # Flatten for interpolation
-    transformed_grid_coords_flat = transformed_grid_coords.reshape(-1, 3)
-
-    # Get movement corrections
-    grid_movement_x_interp = ts.grid_movement_x.get_interpolated(transformed_grid_coords_flat)
-    grid_movement_y_interp = ts.grid_movement_y.get_interpolated(transformed_grid_coords_flat)
-
-    # Reshape back: (n_particles, n_tilts)
-    movement_x = grid_movement_x_interp.reshape(n_particles, ts.n_tilts)
-    movement_y = grid_movement_y_interp.reshape(n_particles, ts.n_tilts)
-
-    # Subtract movement corrections
-    transformed[..., 0] -= movement_x
-    transformed[..., 1] -= movement_y
 
     # Convert Z to defocus (Angstroms to micrometers: 1e-4)
     # grid_defocus_interp: (n_tilts,), broadcast over particles
