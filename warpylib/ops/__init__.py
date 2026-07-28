@@ -5,7 +5,8 @@ from .rescale import rescale
 from .norm import norm
 from .norm_ft import norm_ft
 from .norm_rft import norm_rft
-from .masking import mask_rectangular
+from .masking import mask_rectangular, mask_sphere, mask_sphere_ft, mask_sphere_rft
+from .radial_average import radial_average_rft
 from .plane import fit_plane, subtract_plane
 from .filters import get_sinc2_correction, get_sinc2_correction_rft
 from .preprocess_tilt_data import preprocess_tilt_data
@@ -14,7 +15,8 @@ __all__ = [
     'resize', 'resize_ft', 'resize_rft',
     'rescale',
     'norm', 'norm_ft', 'norm_rft',
-    'mask_rectangular',
+    'mask_rectangular', 'mask_sphere', 'mask_sphere_ft', 'mask_sphere_rft',
+    'radial_average_rft',
     'fit_plane', 'subtract_plane',
     'get_sinc2_correction', 'get_sinc2_correction_rft',
     'preprocess_tilt_data',
