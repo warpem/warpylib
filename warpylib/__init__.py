@@ -21,7 +21,15 @@ from .euler import (
     rotate_z,
 )
 from .interpolating_bspline import InterpolatingBSpline1d, InterpolatingBSpline2d
-from .tilt_series import TiltSeries
+
+# tilt_series depends on torch_projectors, whose compiled extension is tied to a
+# specific torch ABI. Import it lazily so that torch-only functionality (e.g.
+# warpylib.ops) stays usable even when torch_projectors cannot load against the
+# installed torch build.
+try:
+    from .tilt_series import TiltSeries
+except (ImportError, OSError):  # pragma: no cover - optional torch_projectors build/ABI
+    TiltSeries = None  # type: ignore[assignment,misc]
 
 __all__ = [
     "CubicGrid",
