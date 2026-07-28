@@ -2,6 +2,43 @@ import torch
 from typing import Tuple, Union
 
 
+def radial_shell_grid_rft(
+    image_shape: Union[Tuple[int, int], Tuple[int, int, int]],
+    device: torch.device = None,
+) -> torch.Tensor:
+    """Integer frequency-shell radius for every pixel of an RFFT-layout grid.
+
+    Uses the standard RFFT layout with DC at index 0: non-RFFT axes run in
+    ``fftfreq`` order, the last axis is the half-spectrum ``0..W//2``. The value
+    at each pixel is ``round(sqrt(sum of squared integer frequencies))``.
+
+    Parameters
+    ----------
+    image_shape : tuple of int
+        Full real-space spatial shape: (H, W) for 2D or (D, H, W) for 3D. All
+        dimensions must be even.
+    device : torch.device, optional
+        Device for the returned grid.
+
+    Returns
+    -------
+    torch.Tensor
+        int64 tensor of shape (*image_shape[:-1], image_shape[-1]//2 + 1).
+    """
+    ndim_spatial = len(image_shape)
+    if ndim_spatial not in (2, 3):
+        raise ValueError(f"image_shape must have 2 or 3 elements, got {ndim_spatial}")
+    for i, dim_size in enumerate(image_shape):
+        if dim_size % 2 != 0:
+            raise ValueError(f"image_shape dimension {i} must be even, got {dim_size}")
+    w_half = image_shape[-1] // 2 + 1
+    axes = [torch.fft.fftfreq(n, device=device) * n for n in image_shape[:-1]]
+    axes.append(torch.arange(w_half, device=device, dtype=torch.float32))
+    grids = torch.meshgrid(*axes, indexing="ij")
+    radius = torch.sqrt(sum(g**2 for g in grids))
+    return torch.round(radius).to(torch.int64)
+
+
 def radial_average_rft(
     values: torch.Tensor,
     image_shape: Union[Tuple[int, int], Tuple[int, int, int]],
@@ -65,17 +102,9 @@ def radial_average_rft(
         )
 
     device = values.device
-    w_half = image_shape[-1] // 2 + 1
     n_shells = image_shape[-1] // 2 + 1
 
-    # Frequency coordinates in cycles-per-box (integer for even sizes): full
-    # fftfreq order on non-RFFT axes, half-spectrum on the last axis.
-    axes = [torch.fft.fftfreq(n, device=device) * n for n in image_shape[:-1]]
-    axes.append(torch.arange(w_half, device=device, dtype=torch.float32))
-    grids = torch.meshgrid(*axes, indexing="ij")
-    radius = torch.sqrt(sum(g**2 for g in grids))
-    shell = torch.round(radius).to(torch.int64)
-
+    shell = radial_shell_grid_rft(image_shape, device=device)
     flat_shell = shell.reshape(-1)
     valid = flat_shell < n_shells
     flat_shell_valid = flat_shell[valid]

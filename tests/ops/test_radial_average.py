@@ -5,7 +5,29 @@ Tests for radial_average_rft operation
 import torch
 import pytest
 
-from warpylib.ops import radial_average_rft
+from warpylib.ops import radial_average_rft, radial_shell_grid_rft
+
+
+class TestRadialShellGridRft:
+    def test_dc_and_axes_2d(self):
+        grid = radial_shell_grid_rft((8, 8))
+        assert grid.shape == (8, 5)
+        assert grid.dtype == torch.int64
+        assert grid[0, 0] == 0  # DC
+        assert grid[0, 3] == 3  # kx=3 along the half-axis
+        assert grid[3, 0] == 3  # ky=3 (fftfreq order)
+        assert grid[1, 1] == 1  # round(sqrt(2)) = 1
+
+    def test_matches_radial_average_internal_binning(self):
+        # A field equal to its own shell index averages back to that index.
+        grid = radial_shell_grid_rft((16, 16)).to(torch.float32)
+        profile, counts = radial_average_rft(grid, (16, 16))
+        expected = torch.arange(16 // 2 + 1, dtype=torch.float32)
+        assert torch.allclose(profile[counts > 0], expected[counts > 0], atol=1e-5)
+
+    def test_rejects_odd(self):
+        with pytest.raises(ValueError, match="even"):
+            radial_shell_grid_rft((7, 8))
 
 
 class TestRadialAverageRft:
