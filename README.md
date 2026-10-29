@@ -223,6 +223,31 @@ ts.import_alignments(
 )
 ```
 
+#### Aligned stacks
+
+Resample the raw tilt images so that the tilt axis is along Y through the image
+center, with tilt axis offsets and image warp (`grid_movement_x/y`) removed. 4D
+volume warp grids act on 3D positions and cannot be applied to a 2D stack; they
+are ignored with a warning.
+
+```python
+aligned = ts.get_aligned_stack(
+    tilt_data=tilt_data,        # (n_tilts, H, W), or only the used tilts
+    pixel_size=5.0,             # Å/px of tilt_data and the output
+    tilt_ids=None,              # default: tilts where ts.use_tilt is True
+    output_shape=None,          # (H, W), default: same as tilt_data
+    interpolation="bicubic",    # or "bilinear" / "nearest"
+    fill_value="mean",          # for pixels outside the raw image
+)
+# aligned: (n_selected_tilts, H, W)
+
+# Same, written as MRC plus a .tlt file with ts.angles + ts.level_angle_y
+ts.write_aligned_stack(tilt_data, pixel_size=5.0, path="aligned/TS_1.mrc")
+
+# Where 3D points land in the aligned stack (same units as get_position_in_all_tilts)
+aligned_xy = ts.get_positions_in_aligned_stack(coords_per_tilt)  # (N, n_tilts, 2)
+```
+
 #### Coordinate shifts
 
 ```python
