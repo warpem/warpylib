@@ -83,6 +83,11 @@ class TiltSeries:
         self.unselect_manual: Optional[bool] = None
         self.ctf_resolution_estimate: float = 0.0
 
+        # Namespaced XML subtrees survive edits to Warp's native metadata.
+        # Beam's parsed calibration remains separate from native dose weights.
+        self.metadata_extensions: List[str] = []
+        self.beam_refinement: Optional[dict] = None
+
         # Per-tilt parameters
         self.angles: torch.Tensor = torch.zeros(n_tilts, dtype=torch.float32)
         self.dose: torch.Tensor = torch.zeros(n_tilts, dtype=torch.float32)

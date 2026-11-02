@@ -7,12 +7,73 @@ from XML and STAR files.
 
 from typing import Union
 from pathlib import Path
+import json
 import torch
 from lxml import etree
 import pandas as pd
 import starfile
 from ..cubic_grid import CubicGrid
 from ..ctf import CTF
+
+
+_BEAM_REFINEMENT = "{urn:beam:refinement:1}Refinement"
+_BEAM_CALIBRATION = "{urn:beam:refinement:1}Calibration"
+
+
+def _load_metadata_extensions(ts: "TiltSeries", root: etree._Element) -> None:
+    """Preserve namespaced subtrees and expose Beam calibration independently."""
+    ts.metadata_extensions = [
+        etree.tostring(child, encoding="unicode", with_tail=False)
+        for child in root
+        if isinstance(child.tag, str) and etree.QName(child).namespace is not None
+    ]
+    ts.beam_refinement = None
+    beam_nodes = root.findall(_BEAM_REFINEMENT)
+    if len(beam_nodes) > 1:
+        raise ValueError("multiple Beam Refinement extensions in one tilt metadata file")
+    if not beam_nodes:
+        return
+    node = beam_nodes[0]
+    calibration_nodes = node.findall(_BEAM_CALIBRATION)
+    if len(calibration_nodes) > 1:
+        raise ValueError("multiple Beam Calibration elements in one refinement extension")
+    calibration = None
+    if calibration_nodes and calibration_nodes[0].text:
+        calibration = json.loads(calibration_nodes[0].text)
+        if not isinstance(calibration, dict):
+            raise ValueError("Beam Calibration JSON must be an object")
+        # Reject NaN/Infinity, which json.loads otherwise accepts as extensions.
+        json.dumps(calibration, allow_nan=False)
+    ts.beam_refinement = {"attributes": dict(node.attrib), "calibration": calibration}
+
+
+def _save_metadata_extensions(ts: "TiltSeries", root: etree._Element) -> None:
+    """Retain unknown extension content while honoring edits to parsed Beam fields."""
+    extensions = [etree.fromstring(xml.encode("utf-8")) for xml in ts.metadata_extensions]
+    beam_nodes = [node for node in extensions if node.tag == _BEAM_REFINEMENT]
+    if len(beam_nodes) > 1:
+        raise ValueError("multiple Beam Refinement extensions in one tilt metadata file")
+    if ts.beam_refinement is not None:
+        if beam_nodes:
+            node = beam_nodes[0]
+        else:
+            node = etree.Element(_BEAM_REFINEMENT, nsmap={"beam": "urn:beam:refinement:1"})
+            extensions.append(node)
+        node.attrib.clear()
+        node.attrib.update({str(k): str(v) for k, v in ts.beam_refinement["attributes"].items()})
+        calibration_nodes = node.findall(_BEAM_CALIBRATION)
+        if len(calibration_nodes) > 1:
+            raise ValueError("multiple Beam Calibration elements in one refinement extension")
+        calibration = ts.beam_refinement.get("calibration")
+        if calibration is not None:
+            if not isinstance(calibration, dict):
+                raise ValueError("Beam Calibration JSON must be an object")
+            calibration_node = (calibration_nodes[0] if calibration_nodes
+                                else etree.SubElement(node, _BEAM_CALIBRATION))
+            calibration_node.text = json.dumps(calibration, sort_keys=True, allow_nan=False)
+        elif calibration_nodes:
+            node.remove(calibration_nodes[0])
+    root.extend(extensions)
 
 
 def initialize_from_tomo_star(ts: "TiltSeries", star_table: Union[str, pd.DataFrame]) -> None:
@@ -88,20 +149,24 @@ def initialize_from_tomo_star(ts: "TiltSeries", star_table: Union[str, pd.DataFr
     ts.fov_fraction = torch.ones(n_rows, dtype=torch.float32)
 
 
-def load_meta(ts: "TiltSeries", xml_path: str) -> None:
+def load_meta(ts: "TiltSeries", xml_path: str, *, strict: bool = False) -> None:
     """
     Load metadata from XML file.
 
     Args:
         ts: TiltSeries instance to load into
         xml_path: Path to XML file
+        strict: Raise on missing or malformed metadata instead of returning partial defaults.
     """
     if not Path(xml_path).exists():
+        if strict:
+            raise FileNotFoundError(xml_path)
         return
 
     try:
         tree = etree.parse(xml_path)
         root = tree.getroot()
+        _load_metadata_extensions(ts, root)
 
         # Load data directory if present
         data_dir = root.get("DataDirectory")
@@ -135,11 +200,11 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
 
         mag_correction = root.get("MagnificationCorrection")
         if mag_correction:
-            # Parse as Matrix2 (4 values)
+            # Warp Matrix2 serializes columns: M11, M21, M12, M22.
             values = [float(x.strip()) for x in mag_correction.split(",")]
             if len(values) == 4:
-                ts.magnification_correction = torch.tensor([[values[0], values[1]],
-                                                           [values[2], values[3]]], dtype=torch.float32)
+                ts.magnification_correction = torch.tensor([[values[0], values[2]],
+                                                           [values[1], values[3]]], dtype=torch.float32)
 
         volume_dims = root.get("VolumeDimensionsAngstrom")
         if volume_dims:
@@ -296,6 +361,8 @@ def load_meta(ts: "TiltSeries", xml_path: str) -> None:
             ts.grid_location_weights = CubicGrid.load_from_xml(grid_location_weights)
 
     except Exception as e:
+        if strict:
+            raise ValueError(f"Failed to load tilt metadata {xml_path}: {e}") from e
         print(f"Error loading metadata: {e}")
         return
 
@@ -331,9 +398,9 @@ def save_meta(ts: "TiltSeries", xml_path: str = None) -> None:
     root.set("Bfactor", f"{ts.global_bfactor:.9g}")
     root.set("Weight", f"{ts.global_weight:.9g}")
 
-    # Save magnification correction as Matrix2 (4 values)
+    # Warp Matrix2 serializes columns: M11, M21, M12, M22.
     mag = ts.magnification_correction
-    root.set("MagnificationCorrection", f"{mag[0,0]:.9g}, {mag[0,1]:.9g}, {mag[1,0]:.9g}, {mag[1,1]:.9g}")
+    root.set("MagnificationCorrection", f"{mag[0,0]:.9g}, {mag[1,0]:.9g}, {mag[0,1]:.9g}, {mag[1,1]:.9g}")
 
     root.set("VolumeDimensionsAngstrom",
              f"{ts.volume_dimensions_physical[0]:.9g}, {ts.volume_dimensions_physical[1]:.9g}, {ts.volume_dimensions_physical[2]:.9g}")
@@ -430,6 +497,8 @@ def save_meta(ts: "TiltSeries", xml_path: str = None) -> None:
 
     grid_location_weights = etree.SubElement(root, "GridLocationWeights")
     ts.grid_location_weights.save_to_xml(grid_location_weights)
+
+    _save_metadata_extensions(ts, root)
 
     # Write to file with pretty formatting
     tree = etree.ElementTree(root)

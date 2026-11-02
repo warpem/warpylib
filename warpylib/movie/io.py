@@ -64,12 +64,12 @@ def load_meta(movie: "Movie", xml_path: str) -> None:
 
         mag_correction = root.get("MagnificationCorrection")
         if mag_correction:
-            # Parse as Matrix2 (4 values)
+            # Warp Matrix2 serializes columns: M11, M21, M12, M22.
             import torch
             values = [float(x.strip()) for x in mag_correction.strip("()").split(",")]
             if len(values) == 4:
-                movie.magnification_correction = torch.tensor([[values[0], values[1]],
-                                                               [values[2], values[3]]], dtype=torch.float32)
+                movie.magnification_correction = torch.tensor([[values[0], values[2]],
+                                                               [values[1], values[3]]], dtype=torch.float32)
 
         # Load CTF
         ctf_elem = root.find("CTF")
@@ -200,9 +200,9 @@ def save_meta(movie: "Movie", xml_path: str) -> None:
     root.set("Bfactor", f"{movie.global_bfactor:.9g}")
     root.set("Weight", f"{movie.global_weight:.9g}")
 
-    # Save magnification correction as Matrix2 (4 values)
+    # Warp Matrix2 serializes columns: M11, M21, M12, M22.
     mag = movie.magnification_correction
-    root.set("MagnificationCorrection", f"{mag[0,0]:.9g}, {mag[0,1]:.9g}, {mag[1,0]:.9g}, {mag[1,1]:.9g}")
+    root.set("MagnificationCorrection", f"{mag[0,0]:.9g}, {mag[1,0]:.9g}, {mag[0,1]:.9g}, {mag[1,1]:.9g}")
 
     # Save CTF
     ctf_elem = etree.SubElement(root, "CTF")
