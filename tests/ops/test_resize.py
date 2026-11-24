@@ -342,6 +342,47 @@ class TestEdgeCases:
         # Center 2x2 should be ones
         assert torch.allclose(y[0, 15:17, 15:17], torch.ones(2, 2))
 
+    def test_reflect_padding_matches_torch(self):
+        """Reflect padding within torch's limit matches F.pad"""
+        x = torch.randn(3, 6, 8)
+        y = resize(x, size=(14, 12), padding_mode='reflect')
+        expected = torch.nn.functional.pad(x, (2, 2, 4, 4), mode='reflect')
+
+        assert torch.equal(y, expected)
+
+    def test_reflect_padding_larger_than_input(self):
+        """Reflect padding larger than the input keeps mirroring, e.g. when
+        preprocess_tilt_data pads small downsampled images by 128 pixels"""
+        x = torch.randn(108, 152)
+        y = resize(x, size=(108 + 256, 152 + 256), padding_mode='reflect')
+
+        assert y.shape == (364, 408)
+        # Original data stays centered
+        assert torch.equal(y[128:236, 128:280], x)
+        # Mirrored about the edge pixel: y[128 - k] == x[k]
+        assert torch.equal(y[127, 128:280], x[1])
+        assert torch.equal(y[21, 128:280], x[107])
+        # Beyond one full mirror the signal reflects back again
+        assert torch.equal(y[20, 128:280], x[106])
+        assert torch.equal(y[0, 128:280], x[86])
+
+    def test_reflect_padding_large_3d_with_batch_dims(self):
+        """Large reflect padding works in 3D with several batch dimensions"""
+        x = torch.randn(2, 3, 4, 4, 4)
+        y = resize(x, size=(20, 4, 12), padding_mode='reflect')
+
+        assert y.shape == (2, 3, 20, 4, 12)
+        assert torch.equal(y[..., 8:12, :, 4:8], x)
+
+    def test_reflect_padding_gradient_flow(self):
+        """Gradients flow through large reflect padding"""
+        x = torch.randn(1, 4, 4, requires_grad=True)
+        y = resize(x, size=(16, 16), padding_mode='reflect')
+        y.sum().backward()
+
+        assert x.grad is not None
+        assert x.grad.sum() == 256
+
     def test_very_large_crop(self):
         """Test cropping from much larger size"""
         x = torch.randn(1, 64, 64)
