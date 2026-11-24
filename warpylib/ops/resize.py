@@ -3,6 +3,38 @@ import torch.nn.functional as F
 from typing import Tuple, Union, Literal
 
 
+def _reflect_pad(tensor: torch.Tensor, pad_amounts: list) -> torch.Tensor:
+    """
+    Reflect-pad the trailing dimensions of a tensor by any amount.
+
+    Equivalent to F.pad(..., mode='reflect') but without the requirement that
+    padding is smaller than the input size: the signal keeps mirroring back
+    and forth about its edge pixels. Works for any number of batch dimensions.
+
+    pad_amounts follows F.pad ordering: (before, after) pairs starting from
+    the last dimension.
+    """
+    for k in range(len(pad_amounts) // 2):
+        pad_before, pad_after = pad_amounts[2 * k], pad_amounts[2 * k + 1]
+        if pad_before == 0 and pad_after == 0:
+            continue
+
+        dim = -(k + 1)
+        n = tensor.shape[dim]
+        idx = torch.arange(-pad_before, n + pad_after, device=tensor.device)
+        if n == 1:
+            # Nothing to mirror, repeat the single element
+            idx = torch.zeros_like(idx)
+        else:
+            period = 2 * (n - 1)
+            idx = idx.remainder(period)
+            idx = torch.where(idx >= n, period - idx, idx)
+
+        tensor = tensor.index_select(dim % tensor.ndim, idx)
+
+    return tensor
+
+
 def resize(
     tensor: torch.Tensor,
     size: Union[Tuple[int, int], Tuple[int, int, int]],
@@ -138,6 +170,10 @@ def resize(
     if needs_pad:
         if padding_mode == 'constant':
             result = F.pad(result, pad_amounts, mode='constant', value=padding_value)
+        elif padding_mode == 'reflect':
+            # F.pad's reflect mode requires padding < input size, which fails
+            # e.g. for small downsampled images, so mirror via indexing instead
+            result = _reflect_pad(result, pad_amounts)
         else:
             # Non-constant padding requires input to have enough dimensions
             # For 2D: need at least 3D (batch, H, W)
